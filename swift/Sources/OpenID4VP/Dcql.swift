@@ -74,6 +74,19 @@ public struct DcqlQuery {
                 return try ids.map { if case let .str(s) = $0 { return s } else { throw DcqlError("claim_sets entries must be strings") } }
             }
         }
+        // mdoc (ISO 18013-5): a claim path addresses [namespace, data element], both strings.
+        // Require the first two segments to be string keys (>=2, not strictly ==2 — a deeper
+        // path may index into a structured element value).
+        if format == "mso_mdoc" {
+            for c in claims {
+                let firstTwoAreKeys = c.path.count >= 2 && {
+                    if case .key = c.path[0], case .key = c.path[1] { return true } else { return false }
+                }()
+                if !firstTwoAreKeys {
+                    throw DcqlError("credential query '\(id)': mso_mdoc claim path must start with [namespace, element] (two strings)")
+                }
+            }
+        }
         return CredentialQuery(id: id, format: format, meta: meta, claims: claims, claimSets: claimSets)
     }
 

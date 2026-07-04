@@ -47,6 +47,17 @@ public struct IssuerSigned {
         (try? issuerAuth.protectedHeaders())?.x5chain ?? issuerAuth.unprotected.x5chain
     }
 
+    /// Parses the MSO from the `issuerAuth` payload. Trust the result only after verifying the signature.
+    public func parseMso() throws -> MobileSecurityObject {
+        guard let payload = issuerAuth.payload else { throw MdocError("issuerAuth has no payload") }
+        return try MsoCodec.parse(try unwrapTag24(payload))
+    }
+
+    /// namespace -> [(elementIdentifier, value)] across all issuer-signed items.
+    public func elements() -> [(String, [(String, Cbor)])] {
+        nameSpaces.map { ns, items in (ns, items.map { ($0.item.elementIdentifier, $0.item.elementValue) }) }
+    }
+
     public static func decode(_ bytes: [UInt8]) throws -> IssuerSigned {
         try fromCbor(try CborDecoder.decode(bytes))
     }
@@ -84,6 +95,20 @@ public struct IssuerSigned {
 
 func value(_ entries: [(Cbor, Cbor)], _ name: String) -> Cbor? {
     entries.first { if case let .text(t) = $0.0 { return t == name }; return false }?.1
+}
+
+/// issuerAuth payload is MobileSecurityObjectBytes = #6.24(bstr .cbor MSO); unwrap to the MSO bytes.
+func unwrapTag24(_ payload: [UInt8]) throws -> [UInt8] {
+    let decoded = try CborDecoder.decode(payload)
+    switch decoded {
+    case let .tagged(tag, inner) where tag == TAG_ENCODED_CBOR:
+        guard case let .bytes(b) = inner else { throw MdocError("tag 24 payload must be bstr") }
+        return b
+    case .map:
+        return payload // already the bare MSO
+    default:
+        throw MdocError("unexpected issuerAuth payload shape")
+    }
 }
 
 enum MsoCodec {

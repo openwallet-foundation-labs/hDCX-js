@@ -38,8 +38,7 @@ public struct MdocVerifier {
         let cose = issuerSigned.issuerAuth
         guard cose.verify(publicKey: issuerKey) else { throw MdocError("issuerAuth signature invalid") }
 
-        guard let payload = cose.payload else { throw MdocError("issuerAuth has no payload") }
-        let mso = try MsoCodec.parse(try unwrapTag24(payload))
+        let mso = try issuerSigned.parseMso()
 
         guard mso.digestAlgorithm.uppercased() == "SHA-256" else {
             throw MdocError("unsupported MSO digest algorithm \(mso.digestAlgorithm)")
@@ -70,19 +69,5 @@ public struct MdocVerifier {
             docType: mso.docType, deviceKey: mso.deviceKey, elements: elements,
             signed: mso.signed, validFrom: mso.validFrom, validUntil: mso.validUntil
         )
-    }
-
-    /// issuerAuth payload is MobileSecurityObjectBytes = #6.24(bstr .cbor MSO); unwrap to the MSO bytes.
-    private func unwrapTag24(_ payload: [UInt8]) throws -> [UInt8] {
-        let decoded = try CborDecoder.decode(payload)
-        switch decoded {
-        case let .tagged(tag, inner) where tag == TAG_ENCODED_CBOR:
-            guard case let .bytes(b) = inner else { throw MdocError("tag 24 payload must be bstr") }
-            return b
-        case .map:
-            return payload // already the bare MSO
-        default:
-            throw MdocError("unexpected issuerAuth payload shape")
-        }
     }
 }

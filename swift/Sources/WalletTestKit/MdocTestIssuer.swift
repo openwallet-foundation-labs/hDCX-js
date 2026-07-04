@@ -2,12 +2,15 @@ import CborCose
 import Crypto
 import Foundation
 import WalletAPI
-@testable import MDoc
 
-/// Builds a signed mdoc `IssuerSigned` for tests (the wallet only ever consumes these).
-enum MdocTestIssuer {
+/// Builds a signed mdoc `IssuerSigned` (ISO 18013-5) for tests — the wallet only ever consumes
+/// these, so issuing lives in the test kit. Produces raw `IssuerSigned` CBOR bytes.
+public enum MdocTestIssuer {
 
-    static func issue(
+    private static let tagEncodedCbor: UInt64 = 24
+    private static let tagTdate: UInt64 = 0
+
+    public static func issue(
         area: any SecureArea,
         issuerKey: KeyInfo,
         deviceKey: EcPublicKey,
@@ -29,7 +32,7 @@ enum MdocTestIssuer {
                 (.text("elementIdentifier"), .text(element.0)),
                 (.text("elementValue"), element.1),
             ])
-            let tagged = Cbor.tagged(TAG_ENCODED_CBOR, .bytes(try CborEncoder.encode(itemMap)))
+            let tagged = Cbor.tagged(tagEncodedCbor, .bytes(try CborEncoder.encode(itemMap)))
             itemEntries.append(tagged)
             digests.append((.int(digestId), .bytes([UInt8](SHA256.hash(data: Data(try CborEncoder.encode(tagged)))))))
         }
@@ -46,7 +49,7 @@ enum MdocTestIssuer {
                 (.text("validUntil"), tdate(validUntil)),
             ])),
         ])
-        let msoBytes = try CborEncoder.encode(.tagged(TAG_ENCODED_CBOR, .bytes(try CborEncoder.encode(mso))))
+        let msoBytes = try CborEncoder.encode(.tagged(tagEncodedCbor, .bytes(try CborEncoder.encode(mso))))
 
         let unprotected = CoseHeaders([(.int(33), .array(x5chain.map { .bytes($0) }))])
         let issuerAuth = try await CoseSign1.sign(
@@ -63,5 +66,11 @@ enum MdocTestIssuer {
         return try CborEncoder.encode(issuerSigned)
     }
 
-    static func tdate(_ date: Date) -> Cbor { .tagged(TAG_TDATE, .text(MsoCodec.isoFormatter.string(from: date))) }
+    private static func tdate(_ date: Date) -> Cbor { .tagged(tagTdate, .text(isoFormatter.string(from: date))) }
+
+    public static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
 }

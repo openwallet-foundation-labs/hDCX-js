@@ -36,7 +36,7 @@ let package = Package(
         ),
         .target(
             name: "OpenID4VP",
-            dependencies: ["WalletAPI", "SdJwt", "CborCose", .product(name: "Crypto", package: "swift-crypto")]
+            dependencies: ["WalletAPI", "SdJwt", "CborCose", "MDoc", .product(name: "Crypto", package: "swift-crypto")]
         ),
         .target(
             name: "MDoc",
@@ -52,7 +52,7 @@ let package = Package(
         ),
         .target(
             name: "WalletTestKit",
-            dependencies: ["WalletAPI", .product(name: "Crypto", package: "swift-crypto")]
+            dependencies: ["WalletAPI", "CborCose", .product(name: "Crypto", package: "swift-crypto")]
         ),
         .testTarget(
             name: "CborCoseTests",
