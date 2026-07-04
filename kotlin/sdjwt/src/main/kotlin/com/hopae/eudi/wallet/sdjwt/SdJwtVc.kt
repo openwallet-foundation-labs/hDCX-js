@@ -44,7 +44,9 @@ class SdJwtVcVerifier(
     private val timeValidator: JwtTimeValidator,
 ) {
     companion object {
-        private val ALLOWED_TYP = setOf("dc+sd-jwt", "vc+sd-jwt")
+        // draft-ietf-oauth-sd-jwt-vc §3.1: typ MUST be dc+sd-jwt. (vc+sd-jwt was the
+        // pre-2024-11 value, dropped over a conflict with W3C's vc media type.)
+        private const val REQUIRED_TYP = "dc+sd-jwt"
     }
 
     suspend fun verify(
@@ -55,7 +57,7 @@ class SdJwtVcVerifier(
 
         val typ = (jws.header["typ"] as? JsonValue.Str)?.value
             ?: throw SdJwtVcException("missing 'typ' header")
-        if (typ !in ALLOWED_TYP) throw SdJwtVcException("unexpected typ '$typ' for SD-JWT VC")
+        if (typ != REQUIRED_TYP) throw SdJwtVcException("unexpected typ '$typ' for SD-JWT VC (expected $REQUIRED_TYP)")
 
         // Peek issuer before signature verification only to resolve the key; the resolved
         // key then authenticates the payload, and iss is re-read from verified claims below.

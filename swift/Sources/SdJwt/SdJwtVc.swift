@@ -44,7 +44,9 @@ public struct VerifiedSdJwtVc {
 /// (iat/exp/nbf) via `JwtTimeValidator`; issuer key resolution via `IssuerKeyResolver`;
 /// optional holder key binding. Fail-closed throughout.
 public struct SdJwtVcVerifier {
-    private static let allowedTyp: Set<String> = ["dc+sd-jwt", "vc+sd-jwt"]
+    // draft-ietf-oauth-sd-jwt-vc §3.1: typ MUST be dc+sd-jwt. (vc+sd-jwt was the
+    // pre-2024-11 value, dropped over a conflict with W3C's vc media type.)
+    private static let requiredTyp = "dc+sd-jwt"
 
     private let issuerKeyResolver: any IssuerKeyResolver
     private let timeValidator: JwtTimeValidator
@@ -63,8 +65,8 @@ public struct SdJwtVcVerifier {
         guard case let .str(typ)? = jws.header["typ"] else {
             throw SdJwtVcError("missing 'typ' header")
         }
-        guard Self.allowedTyp.contains(typ) else {
-            throw SdJwtVcError("unexpected typ '\(typ)' for SD-JWT VC")
+        guard typ == Self.requiredTyp else {
+            throw SdJwtVcError("unexpected typ '\(typ)' for SD-JWT VC (expected \(Self.requiredTyp))")
         }
 
         // Peek issuer before signature verification only to resolve the key; the resolved
