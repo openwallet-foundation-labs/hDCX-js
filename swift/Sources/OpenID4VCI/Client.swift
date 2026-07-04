@@ -5,6 +5,20 @@ import WalletAPI
 
 let grantPreAuthorized = "urn:ietf:params:oauth:grant-type:pre-authorized_code"
 
+/// Opaque continuation for the authorization code grant, produced by
+/// `prepareAuthorizationCodeIssuance`. Carries the PKCE verifier and resolved endpoints
+/// across the browser redirect. `state` must be echoed by the redirect and checked by the
+/// host (CSRF protection).
+public struct PreparedAuthorization {
+    public let authorizationUrl: String
+    public let state: String
+    let pkce: Pkce
+    let redirectUri: String
+    let configurationId: String
+    let issuerMetadata: CredentialIssuerMetadata
+    let asMetadata: AuthorizationServerMetadata
+}
+
 /// Holder key material for issuance: a key-proof (bound into the credential) and a DPoP key.
 public struct IssuanceKeys {
     public let proofSigner: any JwsSigner
@@ -57,6 +71,87 @@ public struct Openid4VciClient {
         throw VciError.metadata("no authorization server metadata at \(issuer)")
     }
 
+    /// Step 1 of the authorization code grant: pushes the authorization request (PAR when the
+    /// AS supports it) and returns the URL the host must open in a browser, plus the opaque
+    /// continuation to hand back to `finishAuthorizationCodeIssuance` after the redirect.
+    public func prepareAuthorizationCodeIssuance(
+        credentialIssuer: String,
+        configurationId: String,
+        redirectUri: String,
+        issuerState: String? = nil
+    ) async throws -> PreparedAuthorization {
+        let issuerMeta = try await loadIssuerMetadata(credentialIssuer)
+        let asMeta = try await loadAuthorizationServerMetadata(issuerMeta.authorizationServers[0])
+        let pkce = Pkce.create(rng: rng)
+        let state = Base64Url.encode(rng.nextBytes(16))
+
+        let authorizationDetails = JsonValue.arr([
+            .obj([
+                ("type", .str("openid_credential")),
+                ("credential_configuration_id", .str(configurationId)),
+            ])
+        ]).serialize()
+
+        var baseParams: [(String, String)] = [
+            ("response_type", "code"),
+            ("client_id", clientId),
+            ("redirect_uri", redirectUri),
+            ("code_challenge", pkce.codeChallenge),
+            ("code_challenge_method", pkce.method),
+            ("authorization_details", authorizationDetails),
+            ("state", state),
+        ]
+        if let issuerState { baseParams.append(("issuer_state", issuerState)) }
+
+        let authorizationUrl: String
+        if let parEndpoint = asMeta.pushedAuthorizationRequestEndpoint {
+            let form = baseParams.map { "\(enc($0.0))=\(enc($0.1))" }.joined(separator: "&")
+            let parResp = try await http.execute(HttpRequest(
+                method: .post, url: parEndpoint,
+                headers: [("Content-Type", "application/x-www-form-urlencoded"), ("Accept", "application/json")],
+                body: [UInt8](form.utf8)
+            ))
+            try checkOAuth(parResp, parEndpoint)
+            guard case let .str(requestUri)? = try parseObj(parResp, "PAR response")["request_uri"] else {
+                throw VciError.protocolError("PAR response missing request_uri")
+            }
+            guard let authEndpoint = asMeta.authorizationEndpoint else {
+                throw VciError.metadata("AS has PAR but no authorization_endpoint")
+            }
+            authorizationUrl = "\(authEndpoint)?client_id=\(enc(clientId))&request_uri=\(enc(requestUri))"
+        } else {
+            guard let authEndpoint = asMeta.authorizationEndpoint else {
+                throw VciError.metadata("AS metadata has no authorization_endpoint")
+            }
+            let query = baseParams.map { "\(enc($0.0))=\(enc($0.1))" }.joined(separator: "&")
+            authorizationUrl = "\(authEndpoint)?\(query)"
+        }
+
+        return PreparedAuthorization(
+            authorizationUrl: authorizationUrl, state: state, pkce: pkce, redirectUri: redirectUri,
+            configurationId: configurationId, issuerMetadata: issuerMeta, asMetadata: asMeta
+        )
+    }
+
+    /// Step 2 of the authorization code grant: exchanges the redirect's `code` for a
+    /// DPoP-bound access token and requests the credential. The host must verify the redirect
+    /// `state` equals `prepared.state` before calling this.
+    public func finishAuthorizationCodeIssuance(
+        prepared: PreparedAuthorization,
+        authorizationCode: String,
+        keys: IssuanceKeys
+    ) async throws -> CredentialResponse {
+        let dpop = DpopProver(signer: keys.dpopSigner, publicKey: keys.dpopPublicKey, rng: rng, now: clock)
+        var form = "grant_type=\(enc("authorization_code"))"
+        form += "&code=\(enc(authorizationCode))"
+        form += "&redirect_uri=\(enc(prepared.redirectUri))"
+        form += "&code_verifier=\(enc(prepared.pkce.codeVerifier))"
+        form += "&client_id=\(enc(clientId))"
+        let tokenResp = try await postFormWithDpop(prepared.asMetadata.tokenEndpoint, form: form, dpop: dpop, accessToken: nil)
+        let token = try TokenResponse.fromObj(try parseObj(tokenResp, "token response"))
+        return try await requestCredential(prepared.issuerMetadata, prepared.configurationId, token, dpop, keys)
+    }
+
     /// Runs the full pre-authorized code flow and returns the issued credential(s).
     public func issueWithPreAuthorizedCode(
         offer: CredentialOffer,
@@ -76,11 +171,9 @@ public struct Openid4VciClient {
 
         let issuerMeta = try await loadIssuerMetadata(offer.credentialIssuer)
         let asMeta = try await loadAuthorizationServerMetadata(issuerMeta.authorizationServers[0])
-        let config = issuerMeta.credentialConfigurationsSupported[configurationId]
 
         let dpop = DpopProver(signer: keys.dpopSigner, publicKey: keys.dpopPublicKey, rng: rng, now: clock)
 
-        // --- token request ---
         var form = "grant_type=\(enc(grantPreAuthorized))"
         form += "&pre-authorized_code=\(enc(preAuthCode))"
         if let txCode { form += "&tx_code=\(enc(txCode))" }
@@ -90,17 +183,26 @@ public struct Openid4VciClient {
             throw VciError.protocolError("expected DPoP token_type, got '\(token.tokenType)'")
         }
 
-        // --- c_nonce ---
+        return try await requestCredential(issuerMeta, configurationId, token, dpop, keys)
+    }
+
+    /// Shared tail of every grant: c_nonce → key proof → credential request.
+    private func requestCredential(
+        _ issuerMeta: CredentialIssuerMetadata,
+        _ configurationId: String,
+        _ token: TokenResponse,
+        _ dpop: DpopProver,
+        _ keys: IssuanceKeys
+    ) async throws -> CredentialResponse {
         var cNonce = token.cNonce
         if cNonce == nil, let nonceEndpoint = issuerMeta.nonceEndpoint {
             cNonce = try await fetchCNonce(nonceEndpoint)
         }
 
-        // --- key proof + credential request ---
         let proofSigner = KeyProofSigner(signer: keys.proofSigner, publicKey: keys.proofPublicKey, now: clock)
         let proofJwt = try await proofSigner.proofJwt(credentialIssuer: issuerMeta.credentialIssuer, cNonce: cNonce, clientId: clientId)
 
-        let requestFormat = config?.format ?? "dc+sd-jwt"
+        let requestFormat = issuerMeta.credentialConfigurationsSupported[configurationId]?.format ?? "dc+sd-jwt"
         let requestBody = JsonValue.obj([
             ("credential_configuration_id", .str(configurationId)),
             ("proofs", .obj([("jwt", .arr([.str(proofJwt)]))])),

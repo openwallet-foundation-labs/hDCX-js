@@ -71,6 +71,43 @@ final class VciE2eTests: XCTestCase {
         XCTAssertEqual(proofKey.publicKey.x, verified.holderKey?.x)
     }
 
+    func testAuthorizationCodeFlowWithParIssuesCredential() async throws {
+        let area = SoftwareSecureArea()
+        let issuerKey = try await area.createKey(spec: KeySpec(secureArea: area.id, algorithm: .es256))
+        let mock = MockIssuer(area: area, issuerKey: issuerKey, now: now)
+        let keys = try await makeKeys(area)
+        let client = Openid4VciClient(http: mock, rng: CounterRng(), clock: { self.now })
+
+        // Step 1: prepare (PAR pushed, authorization URL built)
+        let prepared = try await client.prepareAuthorizationCodeIssuance(
+            credentialIssuer: "https://issuer.example",
+            configurationId: "eu.europa.ec.eudi.pid.1",
+            redirectUri: "wallet://cb"
+        )
+        let usedPar = await mock.seenPar
+        XCTAssertTrue(usedPar, "PAR endpoint must be used when the AS advertises it")
+        XCTAssertTrue(prepared.authorizationUrl.hasPrefix("https://issuer.example/authorize?"))
+        XCTAssertTrue(prepared.authorizationUrl.contains("request_uri="))
+
+        // Step 2: emulate the browser hitting the authorization URL → redirect carrying the code
+        let redirect = try await mock.execute(HttpRequest(method: .get, url: prepared.authorizationUrl))
+        XCTAssertEqual(302, redirect.status)
+        let location = redirect.headers.first { $0.0 == "Location" }!.1
+        let code = String(location.split(separator: "=")[1].split(separator: "&")[0])
+
+        // Step 3: finish (token via authorization_code + PKCE, then credential)
+        let response = try await client.finishAuthorizationCodeIssuance(prepared: prepared, authorizationCode: code, keys: keys)
+        XCTAssertEqual(1, response.credentials.count)
+
+        let verifier = SdJwtVcVerifier(
+            issuerKeyResolver: JwtVcMetadataKeyResolver(http: mock),
+            timeValidator: JwtTimeValidator(now: { Date(timeIntervalSince1970: TimeInterval(self.now)) })
+        )
+        let verified = try await verifier.verify(try SdJwt.parse(response.credentials[0].credential))
+        XCTAssertEqual("eu.europa.ec.eudi.pid.1", verified.vct)
+        XCTAssertEqual(JsonValue.str("John"), verified.claims["given_name"])
+    }
+
     func testExpiredCredentialIsRejected() async throws {
         let area = SoftwareSecureArea()
         let issuerKey = try await area.createKey(spec: KeySpec(secureArea: area.id, algorithm: .es256))

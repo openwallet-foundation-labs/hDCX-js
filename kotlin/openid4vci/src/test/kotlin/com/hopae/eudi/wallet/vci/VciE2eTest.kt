@@ -76,6 +76,53 @@ class VciE2eTest {
     }
 
     @Test
+    fun authorizationCodeFlowWithParIssuesCredential() = runBlocking {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mock = MockIssuer(area, issuerKey, now)
+        val proofKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val dpopKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val keys = IssuanceKeys(
+            SecureAreaJwsSigner(area, proofKey.handle, SigningAlgorithm.ES256), proofKey.publicKey,
+            SecureAreaJwsSigner(area, dpopKey.handle, SigningAlgorithm.ES256), dpopKey.publicKey,
+        )
+        val client = Openid4VciClient(mock, counterRng(), clock = { now })
+
+        // Step 1: prepare (PAR pushed, authorization URL built)
+        val prepared = client.prepareAuthorizationCodeIssuance(
+            credentialIssuer = "https://issuer.example",
+            configurationId = "eu.europa.ec.eudi.pid.1",
+            redirectUri = "wallet://cb",
+        )
+        assertTrue(mock.seenPar, "PAR endpoint must be used when the AS advertises it")
+        assertTrue(prepared.authorizationUrl.startsWith("https://issuer.example/authorize?"))
+        assertTrue(prepared.authorizationUrl.contains("request_uri="))
+
+        // Step 2: emulate the browser hitting the authorization URL → redirect carrying the code
+        val redirect = mock.execute(
+            com.hopae.eudi.wallet.spi.HttpRequest(
+                com.hopae.eudi.wallet.spi.HttpMethod.GET, prepared.authorizationUrl,
+            )
+        )
+        assertEquals(302, redirect.status)
+        val location = redirect.headers.first { it.first == "Location" }.second
+        val code = location.substringAfter("code=").substringBefore('&')
+
+        // Step 3: finish (token via authorization_code + PKCE, then credential)
+        val response = client.finishAuthorizationCodeIssuance(prepared, code, keys)
+        assertEquals(1, response.credentials.size)
+
+        val verifier = SdJwtVcVerifier(
+            JwtVcMetadataKeyResolver(mock),
+            JwtTimeValidator(now = { Instant.ofEpochSecond(now) }),
+        )
+        val verified = verifier.verify(SdJwt.parse(response.credentials.single().credential))
+        assertEquals("eu.europa.ec.eudi.pid.1", verified.vct)
+        assertEquals(JsonValue.Str("John"), verified.claims["given_name"])
+        assertEquals(proofKey.publicKey.x.toList(), verified.holderKey!!.x.toList())
+    }
+
+    @Test
     fun expiredCredentialIsRejected(): Unit = runBlocking {
         val area = SoftwareSecureArea()
         val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))

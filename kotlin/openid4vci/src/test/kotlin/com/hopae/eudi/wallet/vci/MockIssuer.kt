@@ -34,6 +34,13 @@ class MockIssuer(
     private var accessToken: String? = null
     var seenDpopNonceRetry = false; private set
 
+    // authorization code flow state
+    private var parRequestUri: String? = null
+    private var parChallenge: String? = null
+    private val authCode = "AUTH-CODE-XYZ"
+    private var authCodeChallenge: String? = null
+    var seenPar = false; private set
+
     val credentialOfferJson = """
         {"credential_issuer":"$issuer",
          "credential_configuration_ids":["eu.europa.ec.eudi.pid.1"],
@@ -50,17 +57,59 @@ class MockIssuer(
             path == "/token" -> handleToken(request)
             path == "/nonce" -> handleNonce()
             path == "/credential" -> handleCredential(request)
+            path == "/par" -> handlePar(request)
+            path.startsWith("/authorize") -> handleAuthorize(request)
             else -> HttpResponse(404, emptyList(), "not found".encodeToByteArray())
         }
     }
 
+    /** PAR endpoint: validate the pushed request and return a request_uri. */
+    private fun handlePar(request: HttpRequest): HttpResponse {
+        seenPar = true
+        val form = parseForm(request.body!!.decodeToString())
+        require(form["response_type"] == "code") { "PAR: response_type must be code" }
+        require(form["code_challenge_method"] == "S256") { "PAR: expected S256 PKCE" }
+        require(form["redirect_uri"] != null) { "PAR: missing redirect_uri" }
+        val details = JsonValue.parse(form["authorization_details"]!!) as JsonValue.Arr
+        require(((details.items[0] as JsonValue.Obj)["type"] as JsonValue.Str).value == "openid_credential")
+        authCodeChallenge = form["code_challenge"]
+        parRequestUri = "urn:ietf:params:oauth:request_uri:mock-${form["state"]}"
+        return HttpResponse(
+            201,
+            listOf("Content-Type" to "application/json"),
+            """{"request_uri":"$parRequestUri","expires_in":90}""".encodeToByteArray(),
+        )
+    }
+
+    /** Authorization endpoint: a browser would land here; the mock just checks the request_uri. */
+    private fun handleAuthorize(request: HttpRequest): HttpResponse {
+        val query = request.url.substringAfter('?', "")
+        val params = parseForm(query)
+        require(params["client_id"] != null) { "authorize: missing client_id" }
+        require(params["request_uri"] == parRequestUri) { "authorize: unknown request_uri" }
+        // emulate the redirect the browser would follow (host extracts code from Location)
+        return HttpResponse(302, listOf("Location" to "wallet://cb?code=$authCode&state=..."), ByteArray(0))
+    }
+
     private suspend fun handleToken(request: HttpRequest): HttpResponse {
         val form = parseForm(request.body!!.decodeToString())
-        require(form["grant_type"] == GRANT_PRE_AUTHORIZED)
-        require(form["pre-authorized_code"] == preAuthCode) { "wrong pre-auth code" }
-        require(form["tx_code"] == "1234") { "wrong tx_code" }
-
         val dpopNonce = verifyDpop(request, "POST", "$issuer/token", accessToken = null)
+
+        when (form["grant_type"]) {
+            GRANT_PRE_AUTHORIZED -> {
+                require(form["pre-authorized_code"] == preAuthCode) { "wrong pre-auth code" }
+                require(form["tx_code"] == "1234") { "wrong tx_code" }
+            }
+            "authorization_code" -> {
+                require(form["code"] == authCode) { "wrong authorization code" }
+                // PKCE verification: SHA256(verifier) must equal the pushed challenge
+                val verifier = form["code_verifier"] ?: error("missing code_verifier")
+                val computed = Base64Url.encode(sha256(verifier.encodeToByteArray()))
+                require(computed == authCodeChallenge) { "PKCE verification failed" }
+            }
+            else -> error("unsupported grant_type ${form["grant_type"]}")
+        }
+
         if (dpopNonce == null) {
             // demand a nonce on the first attempt
             val serverNonce = "dpop-nonce-token"
@@ -155,6 +204,9 @@ class MockIssuer(
 
     private fun asMetadata(): String = """
         {"issuer":"$issuer","token_endpoint":"$issuer/token",
+         "authorization_endpoint":"$issuer/authorize",
+         "pushed_authorization_request_endpoint":"$issuer/par",
+         "code_challenge_methods_supported":["S256"],
          "dpop_signing_alg_values_supported":["ES256"]}
     """.trimIndent()
 

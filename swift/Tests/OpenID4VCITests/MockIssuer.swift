@@ -20,6 +20,12 @@ actor MockIssuer: HttpTransport {
     private var accessToken: String?
     private(set) var seenDpopNonceRetry = false
 
+    // authorization code flow state
+    private var parRequestUri: String?
+    private let authCode = "AUTH-CODE-XYZ"
+    private var authCodeChallenge: String?
+    private(set) var seenPar = false
+
     init(area: SoftwareSecureArea, issuerKey: KeyInfo, now: Int64) {
         self.area = area
         self.issuerKey = issuerKey
@@ -44,17 +50,55 @@ actor MockIssuer: HttpTransport {
         case "/token": return try await handleToken(request)
         case "/nonce": return handleNonce()
         case "/credential": return try await handleCredential(request)
-        default: return HttpResponse(status: 404, headers: [], body: [UInt8]("not found".utf8))
+        case "/par": return handlePar(request)
+        default:
+            if path.hasPrefix("/authorize") { return handleAuthorize(request) }
+            return HttpResponse(status: 404, headers: [], body: [UInt8]("not found".utf8))
         }
+    }
+
+    private func handlePar(_ request: HttpRequest) -> HttpResponse {
+        seenPar = true
+        let form = parseForm(String(bytes: request.body ?? [], encoding: .utf8) ?? "")
+        precondition(form["response_type"] == "code", "PAR: response_type must be code")
+        precondition(form["code_challenge_method"] == "S256", "PAR: expected S256 PKCE")
+        precondition(form["redirect_uri"] != nil, "PAR: missing redirect_uri")
+        guard case let .arr(details)? = try? JsonValue.parse(form["authorization_details"] ?? ""),
+              case let .str(type)? = details[0]["type"], type == "openid_credential"
+        else { preconditionFailure("PAR: bad authorization_details") }
+        authCodeChallenge = form["code_challenge"]
+        parRequestUri = "urn:ietf:params:oauth:request_uri:mock-\(form["state"] ?? "")"
+        return HttpResponse(
+            status: 201,
+            headers: [("Content-Type", "application/json")],
+            body: [UInt8](#"{"request_uri":"\#(parRequestUri!)","expires_in":90}"#.utf8)
+        )
+    }
+
+    private func handleAuthorize(_ request: HttpRequest) -> HttpResponse {
+        let query = request.url.contains("?") ? String(request.url.split(separator: "?", maxSplits: 1)[1]) : ""
+        let params = parseForm(query)
+        precondition(params["client_id"] != nil, "authorize: missing client_id")
+        precondition(params["request_uri"] == parRequestUri, "authorize: unknown request_uri")
+        return HttpResponse(status: 302, headers: [("Location", "wallet://cb?code=\(authCode)&state=...")], body: [])
     }
 
     private func handleToken(_ request: HttpRequest) async throws -> HttpResponse {
         let form = parseForm(String(bytes: request.body ?? [], encoding: .utf8) ?? "")
-        precondition(form["grant_type"] == grantPreAuthorized)
-        precondition(form["pre-authorized_code"] == preAuthCode, "wrong pre-auth code")
-        precondition(form["tx_code"] == "1234", "wrong tx_code")
-
         let nonce = try await verifyDpop(request, htm: "POST", htu: "\(issuer)/token", accessToken: nil)
+
+        switch form["grant_type"] {
+        case grantPreAuthorized:
+            precondition(form["pre-authorized_code"] == preAuthCode, "wrong pre-auth code")
+            precondition(form["tx_code"] == "1234", "wrong tx_code")
+        case "authorization_code":
+            precondition(form["code"] == authCode, "wrong authorization code")
+            let verifier = form["code_verifier"] ?? ""
+            let computed = Base64Url.encode(sha256([UInt8](verifier.utf8)))
+            precondition(computed == authCodeChallenge, "PKCE verification failed")
+        default:
+            preconditionFailure("unsupported grant_type \(form["grant_type"] ?? "nil")")
+        }
         if nonce == nil {
             return HttpResponse(
                 status: 400,
@@ -161,7 +205,13 @@ actor MockIssuer: HttpTransport {
     }
 
     private func asMetadata() -> String {
-        #"{"issuer":"\#(issuer)","token_endpoint":"\#(issuer)/token","dpop_signing_alg_values_supported":["ES256"]}"#
+        """
+        {"issuer":"\(issuer)","token_endpoint":"\(issuer)/token",
+         "authorization_endpoint":"\(issuer)/authorize",
+         "pushed_authorization_request_endpoint":"\(issuer)/par",
+         "code_challenge_methods_supported":["S256"],
+         "dpop_signing_alg_values_supported":["ES256"]}
+        """
     }
 
     private func jwtVcIssuerMetadata() -> String {

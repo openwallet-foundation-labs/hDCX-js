@@ -21,6 +21,22 @@ class IssuanceKeys(
 internal const val GRANT_PRE_AUTHORIZED = "urn:ietf:params:oauth:grant-type:pre-authorized_code"
 
 /**
+ * Opaque continuation for the authorization code grant, produced by
+ * [Openid4VciClient.prepareAuthorizationCodeIssuance]. Carries the PKCE verifier and
+ * resolved endpoints across the browser redirect. [state] must be echoed by the redirect
+ * and checked by the host (CSRF protection).
+ */
+class PreparedAuthorization internal constructor(
+    val authorizationUrl: String,
+    val state: String,
+    internal val pkce: Pkce,
+    internal val redirectUri: String,
+    internal val configurationId: String,
+    internal val issuerMetadata: CredentialIssuerMetadata,
+    internal val asMetadata: AuthorizationServerMetadata,
+)
+
+/**
  * OpenID4VCI 1.0 client (HAIP subset) over the [HttpTransport] port.
  *
  * Implements the pre-authorized code grant end to end: issuer + AS metadata discovery,
@@ -53,6 +69,97 @@ class Openid4VciClient(
     }
 
     /**
+     * Step 1 of the authorization code grant: pushes the authorization request (PAR when the
+     * AS supports it) and returns the URL the host must open in a browser, plus the opaque
+     * continuation to hand back to [finishAuthorizationCodeIssuance] after the redirect.
+     */
+    suspend fun prepareAuthorizationCodeIssuance(
+        credentialIssuer: String,
+        configurationId: String,
+        redirectUri: String,
+        issuerState: String? = null,
+    ): PreparedAuthorization {
+        val issuerMeta = loadIssuerMetadata(credentialIssuer)
+        val asMeta = loadAuthorizationServerMetadata(issuerMeta.authorizationServers.first())
+        val pkce = Pkce.create(rng)
+        val state = com.hopae.eudi.wallet.sdjwt.Base64Url.encode(rng.nextBytes(16))
+
+        val authorizationDetails = JsonValue.Arr(
+            listOf(
+                JsonValue.Obj(
+                    listOf(
+                        "type" to JsonValue.Str("openid_credential"),
+                        "credential_configuration_id" to JsonValue.Str(configurationId),
+                    )
+                )
+            )
+        ).serialize()
+
+        val baseParams = buildList {
+            add("response_type" to "code")
+            add("client_id" to clientId)
+            add("redirect_uri" to redirectUri)
+            add("code_challenge" to pkce.codeChallenge)
+            add("code_challenge_method" to pkce.method)
+            add("authorization_details" to authorizationDetails)
+            add("state" to state)
+            issuerState?.let { add("issuer_state" to it) }
+        }
+
+        val authorizationUrl = if (asMeta.pushedAuthorizationRequestEndpoint != null) {
+            val form = baseParams.joinToString("&") { "${enc(it.first)}=${enc(it.second)}" }
+            val parResp = http.execute(
+                HttpRequest(
+                    HttpMethod.POST,
+                    asMeta.pushedAuthorizationRequestEndpoint,
+                    listOf("Content-Type" to "application/x-www-form-urlencoded", "Accept" to "application/json"),
+                    form.encodeToByteArray(),
+                )
+            )
+            checkOAuth(parResp, asMeta.pushedAuthorizationRequestEndpoint)
+            val requestUri = (parseObj(parResp, "PAR response")["request_uri"] as? JsonValue.Str)?.value
+                ?: throw VciException.ProtocolError("PAR response missing request_uri")
+            val endpoint = asMeta.authorizationEndpoint
+                ?: throw VciException.MetadataError("AS has PAR but no authorization_endpoint")
+            "$endpoint?client_id=${enc(clientId)}&request_uri=${enc(requestUri)}"
+        } else {
+            val endpoint = asMeta.authorizationEndpoint
+                ?: throw VciException.MetadataError("AS metadata has no authorization_endpoint")
+            endpoint + "?" + baseParams.joinToString("&") { "${enc(it.first)}=${enc(it.second)}" }
+        }
+
+        return PreparedAuthorization(authorizationUrl, state, pkce, redirectUri, configurationId, issuerMeta, asMeta)
+    }
+
+    /**
+     * Step 2 of the authorization code grant: exchanges the redirect's `code` for a
+     * DPoP-bound access token and requests the credential. [prepared] comes from
+     * [prepareAuthorizationCodeIssuance]; the host must verify the redirect `state`
+     * equals [PreparedAuthorization.state] before calling this.
+     */
+    suspend fun finishAuthorizationCodeIssuance(
+        prepared: PreparedAuthorization,
+        authorizationCode: String,
+        keys: IssuanceKeys,
+    ): CredentialResponse {
+        val issuerMeta = prepared.issuerMetadata
+        val asMeta = prepared.asMetadata
+        val dpop = DpopProver(keys.dpopSigner, keys.dpopPublicKey, rng, clock)
+
+        val form = buildString {
+            append("grant_type=").append(enc("authorization_code"))
+            append("&code=").append(enc(authorizationCode))
+            append("&redirect_uri=").append(enc(prepared.redirectUri))
+            append("&code_verifier=").append(enc(prepared.pkce.codeVerifier))
+            append("&client_id=").append(enc(clientId))
+        }
+        val tokenResp = postFormWithDpop(asMeta.tokenEndpoint, form, dpop, accessToken = null)
+        val token = TokenResponse.fromObj(parseObj(tokenResp, "token response"))
+
+        return requestCredential(issuerMeta, prepared.configurationId, token, dpop, keys)
+    }
+
+    /**
      * Runs the full pre-authorized code flow and returns the issued credential(s).
      * @throws VciException.TxCodeRequired if the offer needs a tx_code and [txCode] is null.
      */
@@ -73,7 +180,6 @@ class Openid4VciClient(
 
         val issuerMeta = loadIssuerMetadata(offer.credentialIssuer)
         val asMeta = loadAuthorizationServerMetadata(issuerMeta.authorizationServers.first())
-        val config = issuerMeta.credentialConfigurationsSupported[configurationId]
 
         val dpop = DpopProver(keys.dpopSigner, keys.dpopPublicKey, rng, clock)
 
@@ -89,23 +195,30 @@ class Openid4VciClient(
             throw VciException.ProtocolError("expected DPoP token_type, got '${token.tokenType}'")
         }
 
-        // --- c_nonce (token response or nonce endpoint) ---
+        return requestCredential(issuerMeta, configurationId, token, dpop, keys)
+    }
+
+    /** Shared tail of every grant: c_nonce → key proof → credential request. */
+    private suspend fun requestCredential(
+        issuerMeta: CredentialIssuerMetadata,
+        configurationId: String,
+        token: TokenResponse,
+        dpop: DpopProver,
+        keys: IssuanceKeys,
+    ): CredentialResponse {
         val cNonce = token.cNonce ?: issuerMeta.nonceEndpoint?.let { fetchCNonce(it) }
 
-        // --- key proof + credential request ---
         val proofSigner = KeyProofSigner(keys.proofSigner, keys.proofPublicKey, clock)
         val proofJwt = proofSigner.proofJwt(issuerMeta.credentialIssuer, cNonce, clientId)
 
-        val requestFormat = config?.format ?: "dc+sd-jwt"
+        val requestFormat = issuerMeta.credentialConfigurationsSupported[configurationId]?.format ?: "dc+sd-jwt"
         val requestBody = JsonValue.Obj(
-            buildList {
-                add("credential_configuration_id" to JsonValue.Str(configurationId))
-                add(
-                    "proofs" to JsonValue.Obj(
-                        listOf("jwt" to JsonValue.Arr(listOf(JsonValue.Str(proofJwt))))
-                    )
-                )
-            }
+            listOf(
+                "credential_configuration_id" to JsonValue.Str(configurationId),
+                "proofs" to JsonValue.Obj(
+                    listOf("jwt" to JsonValue.Arr(listOf(JsonValue.Str(proofJwt))))
+                ),
+            )
         ).serialize()
 
         val credResp = postJsonWithDpop(
