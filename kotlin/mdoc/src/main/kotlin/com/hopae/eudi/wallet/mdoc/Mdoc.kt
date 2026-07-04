@@ -46,6 +46,15 @@ class IssuerSigned(
     /** The x5chain (COSE header 33) presented by the issuer, leaf-first DER. */
     val issuerCertChain: List<ByteArray>? get() = issuerAuth.protected.x5chain ?: issuerAuth.unprotected.x5chain
 
+    /** Parses the MSO from the `issuerAuth` payload. Trust the result only after verifying the signature. */
+    fun parseMso(): MobileSecurityObject =
+        MsoCodec.parse(unwrapTag24(issuerAuth.payload ?: throw MdocException("issuerAuth has no payload")))
+
+    /** namespace -> (elementIdentifier -> value) across all issuer-signed items. */
+    fun elements(): Map<String, Map<String, Cbor>> = nameSpaces.mapValues { (_, items) ->
+        items.associate { it.item.elementIdentifier to it.item.elementValue }
+    }
+
     companion object {
         fun decode(bytes: ByteArray): IssuerSigned = fromCbor(CborDecoder.decode(bytes))
 
@@ -78,6 +87,17 @@ class IssuerSigned(
 
         internal fun Cbor.CborMap.get(name: String): Cbor? =
             entries.firstOrNull { (k, _) -> (k as? Cbor.Text)?.value == name }?.second
+    }
+}
+
+/** issuerAuth payload is MobileSecurityObjectBytes = #6.24(bstr .cbor MSO); unwrap to the MSO bytes. */
+internal fun unwrapTag24(payload: ByteArray): ByteArray {
+    val decoded = CborDecoder.decode(payload)
+    return when {
+        decoded is Cbor.Tagged && decoded.tag == TAG_ENCODED_CBOR ->
+            (decoded.value as? Cbor.Bytes)?.value ?: throw MdocException("tag 24 payload must be bstr")
+        decoded is Cbor.CborMap -> payload // already the bare MSO
+        else -> throw MdocException("unexpected issuerAuth payload shape")
     }
 }
 

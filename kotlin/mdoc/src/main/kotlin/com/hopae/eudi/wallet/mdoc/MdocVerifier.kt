@@ -41,8 +41,7 @@ class MdocVerifier(
         val cose = issuerSigned.issuerAuth
         if (!cose.verify(issuerKey)) throw MdocException("issuerAuth signature invalid")
 
-        val msoBytes = cose.payload ?: throw MdocException("issuerAuth has no payload")
-        val mso = MsoCodec.parse(unwrapTag24(msoBytes))
+        val mso = issuerSigned.parseMso()
 
         if (!mso.digestAlgorithm.equals("SHA-256", ignoreCase = true)) {
             throw MdocException("unsupported MSO digest algorithm ${mso.digestAlgorithm}")
@@ -75,17 +74,6 @@ class MdocVerifier(
             validFrom = mso.validFrom,
             validUntil = mso.validUntil,
         )
-    }
-
-    /** issuerAuth payload is MobileSecurityObjectBytes = #6.24(bstr .cbor MSO); unwrap to the MSO bytes. */
-    private fun unwrapTag24(payload: ByteArray): ByteArray {
-        val decoded = CborDecoder.decode(payload)
-        return when {
-            decoded is Cbor.Tagged && decoded.tag == TAG_ENCODED_CBOR ->
-                (decoded.value as? Cbor.Bytes)?.value ?: throw MdocException("tag 24 payload must be bstr")
-            decoded is Cbor.CborMap -> payload // already the bare MSO
-            else -> throw MdocException("unexpected issuerAuth payload shape")
-        }
     }
 
     private fun sha256(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)

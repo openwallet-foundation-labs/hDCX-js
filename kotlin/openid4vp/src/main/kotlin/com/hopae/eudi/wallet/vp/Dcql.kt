@@ -68,6 +68,16 @@ data class DcqlQuery(
                 (set as? JsonValue.Arr)?.items?.map { id2 -> (id2 as? JsonValue.Str)?.value ?: throw DcqlException("claim_sets entries must be strings") }
                     ?: throw DcqlException("claim_sets must be arrays")
             }
+            // mdoc (ISO 18013-5): a claim path addresses [namespace, data element], both strings.
+            // Require the first two segments to be string keys (>=2, not strictly ==2 — a deeper
+            // path may index into a structured element value).
+            if (format == "mso_mdoc") {
+                claims.forEach { c ->
+                    if (c.path.size < 2 || c.path[0] !is PathElement.Key || c.path[1] !is PathElement.Key) {
+                        throw DcqlException("credential query '$id': mso_mdoc claim path must start with [namespace, element] (two strings)")
+                    }
+                }
+            }
             return CredentialQuery(id, format, meta, claims, claimSets)
         }
 
