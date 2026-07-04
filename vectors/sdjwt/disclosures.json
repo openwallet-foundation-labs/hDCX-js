@@ -1,0 +1,13 @@
+{
+  "description": "SD-JWT (RFC 9901) disclosure golden vectors. digest_of_string: digest = base64url(SHA-256(disclosure UTF-8 bytes)) — SD-JWT spec authoritative. object_property/array_element: our compact-JSON serialization -> base64url `disclosure` -> `digest`. value spec: {t: str|num|bool, v}.",
+  "digest_of_string": [
+    { "name": "spec-given-name", "disclosure": "WyIyR0xDNDJzS1F2ZUNmR2ZyeU5STjl3IiwgImdpdmVuX25hbWUiLCAiSm9obiJd", "digest": "jsu9yVulwQQlhFlM_3JlzMaSFzglhQG0DpfayQwLUK4" }
+  ],
+  "object_property": [
+    { "name": "given-name", "salt": "2GLC42sKQveCfGfryNRN9w", "key": "given_name", "value": { "t": "str", "v": "John" }, "disclosure": "WyIyR0xDNDJzS1F2ZUNmR2ZyeU5STjl3IiwiZ2l2ZW5fbmFtZSIsIkpvaG4iXQ", "digest": "8VHiz7qTXavxvpiTYDCSr_shkUO6qRcVXjkhEnt1os4" },
+    { "name": "family-name-unicode", "salt": "_26bc4LT-ac6q2KI6cBW5es", "key": "family_name", "value": { "t": "str", "v": "Möbius" }, "disclosure": "WyJfMjZiYzRMVC1hYzZxMktJNmNCVzVlcyIsImZhbWlseV9uYW1lIiwiTcO2Yml1cyJd", "digest": "TZjouOTrBKEwUNjNDs9yeMzBoQn8FFLPaJjRRmAtwrM" }
+  ],
+  "array_element": [
+    { "name": "nationality-US", "salt": "lklxF5jMYlGTPUovMNIvCA", "value": { "t": "str", "v": "US" }, "disclosure": "WyJsa2x4RjVqTVlsR1RQVW92TU5JdkNBIiwiVVMiXQ", "digest": "rfyFr4WlK_bCHtsRaMXOxJh3cSm7bG0fPCBsLTq1A6A" }
+  ]
+}
