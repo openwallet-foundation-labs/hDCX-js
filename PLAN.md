@@ -7,6 +7,7 @@
 | 축 | 결정 |
 |---|---|
 | 제품 형태 | **헤드리스 SDK** — 고객사 앱에 임베드하는 B2B 코어. UI 없음, 데모/하네스 앱은 별도 |
+| 역할 | **양방향(dual-role) SDK** — ①**Wallet(holder)**: 발급 수령·보관·제시 ②**Verifier(reader)**: 요청 생성·응답 검증. 근접 제시의 reader/verifier도 나중에 Android 앱으로 만들 예정이라, 하나의 SDK로 wallet과 verifier(reader)를 **둘 다** 만들 수 있어야 한다. 저수준 프리미티브(COSE 서명/검증, 세션 암호화 양측, DCQL, mdoc 모델)는 이미 대칭이라 verifier 파사드는 그 위에 얹는다 |
 | 플랫폼 | **네이티브 2벌** — Kotlin(Android) + Swift(iOS), API 계약만 크로스플랫폼으로 공유 |
 | EUDI ref 재사용 | **풀 스크래치** — EUDI 코드는 dependency가 아니라 ①설계 레퍼런스 ②인터롭 테스트 상대 |
 | 타깃 프로파일 | **EU eIDAS 2.0 우선** — ARF/HAIP 준수가 1차 기준, 타 시장은 프로파일 확장으로 |
@@ -125,6 +126,7 @@ StrongBox/SE 실키 경로, biometric userAuth 바인딩, key attestation 체인
 | **M5 근접 제시** | 18013-5: engagement(QR/NFC), BLE, session encryption. 실기기 인터롭 매트릭스 | 4–8주 | EUDI ref 앱·상용 reader와 실기기 교차 검증 |
 | **M5b DC API** | Android: CredMan registry 등록 + Intent ingress 어댑터, OpenID4VP-over-DC-API 응답 경로. iOS: IdentityDocumentServices(iOS 26+) 익스텐션 어댑터. 코어는 M4의 Handover 변형 재사용 | 3–4주 (M5와 병렬 가능) | Chrome/Android 데모 verifier와 DC API E2E |
 | **M6 Trust·상태·하드닝** | trust 모듈(LOTL, RP 인증), status list, 트랜잭션 로그, 삭제/백업 정책, 보안 감사 준비, 문서화 — **trust 코어 완료 (2026-07-04, M3에서 선행)**: X.509 체인 검증(양 언어), x5c 이슈어 키, VP 요청 x509_san_dns/x509_hash, 실물 EUDI IACA 라이브 검증. M6 잔여: LOTL 자동 소비, CRL/OCSP, status list, 감사 | 4–6주 | 외부 보안 리뷰 + 고객 인증 지원 문서 패키지 |
+| **MV Verifier(Reader) SDK** | **양방향 SDK의 verifier 쪽 파사드** — mdoc reader(DeviceRequest 생성 + readerAuth 서명 + DeviceResponse 검증[issuerAuth 신뢰검증·deviceSignature over SessionTranscript·digest]), OpenID4VP verifier(authorization request 생성 + vp_token/KB-JWT 검증). 나중에 근접 reader/verifier를 **Android 앱**으로 만들 것이므로 필수. **현재 상태(2026-07-05)**: 프리미티브는 대칭(COSE 서명/검증, `SessionEncryption.forReader`, DC API 양쪽), 하지만 **프로덕션 reader/verifier API는 미구현** — DeviceRequest **생성**·readerAuth **서명**은 test-only(MdocTestReader), DeviceResponse **검증**(reader 관점)·OpenID4VP request 생성·vp_token 검증은 없음. wallet 쪽(요청 파싱·ReaderAuth 검증·제시)만 완성 | 3–5주 | mdoc reader가 wallet에 요청→응답 검증 E2E(양 언어), OpenID4VP verifier가 vp_token 검증 |
 | **M7+** | ZKP(longfellow 동향 관망), remote WSCD, TS/RN 바인딩 레이어, 월렛 프로바이더 백엔드(WUA 발급 서비스) 레퍼런스 구현, 타 시장 프로파일 | — | — |
 
 대략 M0–M4 ≈ 4–5개월(원격 플로우 완성), M5–M6 +2–3개월. 리스크 최대 구간은 M4–M5(mdoc 바이트 정합성 + BLE 기기 파편화).
