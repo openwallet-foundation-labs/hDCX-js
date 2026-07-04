@@ -29,6 +29,23 @@ with `auth … --data file.json`). The issued credential lands at `$TMPDIR/eudi-
 to the backend (`backend.issuer.eudiw.dev`), and the session cookie is host-only for the
 backend — a cross-host dance a real browser handles but curl does not. Chrome sidesteps it.
 
+### Pre-authorized code variant — `run-preauth.sh` (no authorization endpoint at all)
+
+The portal's checkbox page has a **Pre-Authorization Code Grant** radio (`#check2`). Selecting
+it skips the country/authorization step entirely: Chrome fills the FormEU test form and
+authorizes, and the QR page yields a **pre-authorized** offer plus a 5-digit **transaction
+code** (PIN). The wallet then redeems `pre-authorized_code` + `tx_code` directly at the token
+endpoint — no authorization endpoint, no redirect.
+
+```sh
+cd tools/headless-interop && ./run-preauth.sh
+```
+
+Pipeline: Chrome drives the portal in pre-auth mode (`drive.js preauth`) → captures offer +
+tx_code → Kotlin `issueWithPreAuthorizedCode` (`preAuthIssue`) → x5c verification. This is the
+simplest live path: the only browser work is producing the offer; issuance itself is a plain
+token-endpoint exchange.
+
 ## Manual variant (one human browser step)
 
 The same Kotlin harness (`kotlin/openid4vci/src/test/.../LiveIssuanceTest.kt`, env-gated so it

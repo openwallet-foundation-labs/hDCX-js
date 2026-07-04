@@ -12,6 +12,11 @@
  *       Open the authorization URL, select the FormEU (FC) test country, fill the test
  *       PID form, click Authorize, and write the final `https://<redirect>?code=...` URL.
  *
+ *   node drive.js preauth <out-offer-file> <out-txcode-file> [--data data.json]
+ *       Drive the portal in pre-authorized mode (fills the FormEU test form, authorizes),
+ *       and write the resulting pre-authorized `haip-vci://…` offer plus its transaction
+ *       code (PIN). Redeem headlessly with no authorization endpoint / browser.
+ *
  * Requires a local Chrome; set CHROME_PATH to override /usr/bin/google-chrome.
  */
 const fs = require('fs');
@@ -57,6 +62,60 @@ async function getOffer(outFile) {
     if (!offer) throw new Error('no credential offer found on QR page');
     fs.writeFileSync(outFile, offer);
     console.log('offer written to', outFile);
+  } finally {
+    await browser.close();
+  }
+}
+
+async function getPreAuthOffer(outOfferFile, outTxCodeFile, data) {
+  const browser = await launch();
+  try {
+    const page = await browser.newPage();
+    await page.goto(PORTAL, { waitUntil: 'networkidle2', timeout: 45000 });
+    // select PID SD-JWT VC and the Pre-Authorization Code Grant radio
+    await page.evaluate(() => {
+      document.querySelector('input[name="eu.europa.ec.eudi.pid_vc_sd_jwt"]').click();
+      const r = document.querySelector('input#check2'); // pre_auth_code
+      r.checked = true;
+      r.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 45000 }),
+      page.click('#btncheck'),
+    ]);
+    // pre-auth skips country selection and goes straight to the test form
+    if (!/display_form/.test(page.url())) throw new Error('did not reach test form: ' + page.url());
+    await page.evaluate((fields) => {
+      for (const [name, value] of Object.entries(fields)) {
+        const e = document.querySelector(`[name="${name}"]`);
+        if (e) { e.value = value; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }
+      }
+    }, data);
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }).catch(() => {}),
+      page.click('button[name=proceed][type=submit]'),
+    ]);
+    // Review & Send -> Authorize -> QR page with the pre-auth offer + tx_code
+    for (let i = 0; i < 3; i++) {
+      const has = await page.evaluate(() => /grant-type:pre-authorized_code/.test(document.documentElement.outerHTML));
+      if (has) break;
+      await page.evaluate(() => {
+        const t = [...document.querySelectorAll('button,input[type=submit],a')]
+          .find((x) => /authori|send/i.test(x.textContent || x.value || ''));
+        if (t) t.click();
+      });
+      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+    }
+    const result = await page.evaluate(() => {
+      const offer = (document.documentElement.outerHTML.match(/haip-vci:\/\/credential_offer\?credential_offer=[^\s"'<>]+/) || [])[0];
+      const txCode = [...document.querySelectorAll('input')].map((e) => e.value).find((v) => /^\d{4,6}$/.test(v));
+      return { offer, txCode };
+    });
+    if (!result.offer) throw new Error('no pre-authorized offer captured');
+    if (!result.txCode) throw new Error('no transaction code found on the QR page');
+    fs.writeFileSync(outOfferFile, result.offer);
+    fs.writeFileSync(outTxCodeFile, result.txCode);
+    console.log('pre-auth offer + tx_code written');
   } finally {
     await browser.close();
   }
@@ -133,15 +192,18 @@ async function driveAuth(authUrlFile, outRedirectFile, data) {
 
 (async () => {
   const [cmd, ...rest] = process.argv.slice(2);
+  const dataIdx = rest.indexOf('--data');
+  let data = DEFAULT_DATA;
+  if (dataIdx >= 0) data = JSON.parse(fs.readFileSync(rest[dataIdx + 1], 'utf8'));
+
   if (cmd === 'offer') {
     await getOffer(rest[0] || 'offer.txt');
   } else if (cmd === 'auth') {
-    const dataIdx = rest.indexOf('--data');
-    let data = DEFAULT_DATA;
-    if (dataIdx >= 0) data = JSON.parse(fs.readFileSync(rest[dataIdx + 1], 'utf8'));
     await driveAuth(rest[0], rest[1], data);
+  } else if (cmd === 'preauth') {
+    await getPreAuthOffer(rest[0], rest[1], data);
   } else {
-    console.error('usage: node drive.js offer <out> | auth <authurl-file> <out-redirect> [--data f.json]');
+    console.error('usage: node drive.js offer <out> | auth <authurl> <out-redirect> | preauth <out-offer> <out-txcode> [--data f.json]');
     process.exit(2);
   }
 })().catch((e) => { console.error('ERROR:', e.message); process.exit(1); });

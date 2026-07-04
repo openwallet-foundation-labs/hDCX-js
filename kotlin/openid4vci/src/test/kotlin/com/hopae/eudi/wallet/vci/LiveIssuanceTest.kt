@@ -98,6 +98,40 @@ class LiveIssuanceTest {
         println("(state saved to ${stateFile.absolutePath})\n")
     }
 
+    /**
+     * Pre-authorized code flow — fully headless, no authorization endpoint or browser.
+     * Reads a pre-auth offer (EUDI_OFFER) + transaction code (EUDI_TXCODE) captured from the
+     * portal and redeems them directly at the token endpoint.
+     */
+    @Test
+    fun preAuthIssue() = runBlocking {
+        assumeTrue(System.getenv("EUDI_LIVE") == "preauth", "run with EUDI_LIVE=preauth")
+        val offerInput = System.getenv("EUDI_OFFER") ?: error("set EUDI_OFFER=<pre-auth offer link>")
+        val txCode = System.getenv("EUDI_TXCODE") ?: error("set EUDI_TXCODE=<transaction code>")
+        val transport = JdkHttpTransport()
+
+        val proof = LocalEcKey.generate()
+        val dpop = LocalEcKey.generate()
+        val keys = IssuanceKeys(proof.signer(), proof.publicKey, dpop.signer(), dpop.publicKey)
+
+        val client = Openid4VciClient(
+            transport, secureRng(), clock = { System.currentTimeMillis() / 1000 }, clientId = "wallet-dev",
+        )
+        val offer = client.resolveCredentialOffer(offerInput)
+        println("pre-auth offer: config=${offer.credentialConfigurationIds.first()} txCodeRequired=${offer.txCode != null}")
+
+        val response = client.issueWithPreAuthorizedCode(
+            offer = offer,
+            configurationId = offer.credentialConfigurationIds.first(),
+            keys = keys,
+            txCode = txCode,
+        )
+        println("credentials received: ${response.credentials.size}")
+        val credential = response.credentials.first().credential
+        File(System.getProperty("java.io.tmpdir"), "eudi-credential.txt").writeText(credential)
+        println("credential saved (${credential.length} chars) — verify with VerifySavedPidTest")
+    }
+
     @Test
     fun step2_finish() = runBlocking {
         assumeTrue(System.getenv("EUDI_LIVE") == "finish", "run with EUDI_LIVE=finish")
