@@ -1,0 +1,51 @@
+{
+  "description": "DCQL matching golden cases (OpenID4VP §6), incl. null-wildcard + values edge cases. Each: a QueryableCredential (claims tree), a DcqlQuery, and the expected {satisfiable, disclosedPaths} for query id 'q'. Both languages must agree.",
+  "credential": {
+    "credentialId": "c1",
+    "format": "dc+sd-jwt",
+    "vct": "urn:eudi:pid:1",
+    "claims": {
+      "family_name": "Han",
+      "given_name": "Jongho",
+      "nationalities": [ { "country": "LU" }, { "country": "KR" } ],
+      "address": { "locality": "Seoul", "country": "KR" }
+    }
+  },
+  "cases": [
+    {
+      "name": "simple-match",
+      "query": { "credentials": [ { "id": "q", "format": "dc+sd-jwt", "meta": { "vct_values": [ "urn:eudi:pid:1" ] }, "claims": [ { "path": [ "family_name" ] } ] } ] },
+      "expected": { "satisfiable": true, "disclosedPaths": [ [ "family_name" ] ] }
+    },
+    {
+      "name": "nested-path",
+      "query": { "credentials": [ { "id": "q", "format": "dc+sd-jwt", "claims": [ { "path": [ "address", "locality" ] } ] } ] },
+      "expected": { "satisfiable": true, "disclosedPaths": [ [ "address", "locality" ] ] }
+    },
+    {
+      "name": "null-wildcard-over-array",
+      "query": { "credentials": [ { "id": "q", "format": "dc+sd-jwt", "claims": [ { "path": [ "nationalities", null, "country" ] } ] } ] },
+      "expected": { "satisfiable": true, "disclosedPaths": [ [ "nationalities", "0", "country" ], [ "nationalities", "1", "country" ] ] }
+    },
+    {
+      "name": "values-match",
+      "query": { "credentials": [ { "id": "q", "format": "dc+sd-jwt", "claims": [ { "path": [ "family_name" ], "values": [ "Han" ] } ] } ] },
+      "expected": { "satisfiable": true, "disclosedPaths": [ [ "family_name" ] ] }
+    },
+    {
+      "name": "values-exclude",
+      "query": { "credentials": [ { "id": "q", "format": "dc+sd-jwt", "claims": [ { "path": [ "family_name" ], "values": [ "Kim" ] } ] } ] },
+      "expected": { "satisfiable": false, "disclosedPaths": [] }
+    },
+    {
+      "name": "missing-claim",
+      "query": { "credentials": [ { "id": "q", "format": "dc+sd-jwt", "claims": [ { "path": [ "birth_date" ] } ] } ] },
+      "expected": { "satisfiable": false, "disclosedPaths": [] }
+    },
+    {
+      "name": "vct-mismatch",
+      "query": { "credentials": [ { "id": "q", "format": "dc+sd-jwt", "meta": { "vct_values": [ "urn:eudi:other:1" ] }, "claims": [ { "path": [ "family_name" ] } ] } ] },
+      "expected": { "satisfiable": false, "disclosedPaths": [] }
+    }
+  ]
+}
