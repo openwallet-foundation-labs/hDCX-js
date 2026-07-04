@@ -33,10 +33,10 @@ public struct Openid4VpClient {
     private let clock: () -> Int64
     private let resolver: AuthorizationRequestResolver
 
-    public init(http: any HttpTransport, clock: @escaping () -> Int64) {
+    public init(http: any HttpTransport, clock: @escaping () -> Int64, trust: (any RequestTrustVerifier)? = nil) {
         self.http = http
         self.clock = clock
-        self.resolver = AuthorizationRequestResolver(http: http)
+        self.resolver = AuthorizationRequestResolver(http: http, trust: trust)
     }
 
     public func resolveRequest(_ requestUri: String) async throws -> ResolvedRequest {

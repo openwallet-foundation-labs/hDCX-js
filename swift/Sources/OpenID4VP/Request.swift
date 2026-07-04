@@ -6,9 +6,26 @@ import WalletAPI
 public struct VerifierInfo {
     public let clientId: String
     public let clientIdScheme: String
+    /// X.509 chain from the request signature, leaf-first DER (nil for unsigned requests).
+    public let certificateChainDer: [[UInt8]]?
     public let commonName: String?
-    /// Signature verified against the request-object signer (false for unsigned requests).
-    public let signatureValid: Bool
+    /// True only when the trust verifier confirmed signature + scheme + chain to a trust anchor.
+    public let trusted: Bool
+
+    public init(clientId: String, clientIdScheme: String, certificateChainDer: [[UInt8]]?, commonName: String?, trusted: Bool) {
+        self.clientId = clientId
+        self.clientIdScheme = clientIdScheme
+        self.certificateChainDer = certificateChainDer
+        self.commonName = commonName
+        self.trusted = trusted
+    }
+}
+
+/// Verifies an OpenID4VP signed request object: JWS signature, client_id scheme
+/// (x509_san_dns / x509_hash), and the certificate chain to a trust anchor. Implemented by
+/// the `Trust` module (swift-certificates); the resolver stays platform-neutral.
+public protocol RequestTrustVerifier: Sendable {
+    func verifyRequestObject(_ jws: Jws, clientId: String, scheme: String) async throws -> VerifierInfo
 }
 
 public struct ResolvedRequest {
@@ -33,9 +50,11 @@ public struct ResolvedRequest {
 /// module it reports `signatureValid = false` for x509 schemes rather than asserting trust.
 public struct AuthorizationRequestResolver {
     private let http: any HttpTransport
+    private let trust: (any RequestTrustVerifier)?
 
-    public init(http: any HttpTransport) {
+    public init(http: any HttpTransport, trust: (any RequestTrustVerifier)? = nil) {
         self.http = http
+        self.trust = trust
     }
 
     public func resolve(_ requestUri: String) async throws -> ResolvedRequest {
@@ -47,12 +66,12 @@ public struct AuthorizationRequestResolver {
         let verifier: VerifierInfo
         if let requestUriParam = params["request_uri"] {
             let jwt = try await fetchRequestObject(requestUriParam)
-            (claims, verifier) = try parseSignedRequest(jwt, clientId, scheme)
+            (claims, verifier) = try await parseSignedRequest(jwt, clientId, scheme)
         } else if let requestParam = params["request"] {
-            (claims, verifier) = try parseSignedRequest(requestParam, clientId, scheme)
+            (claims, verifier) = try await parseSignedRequest(requestParam, clientId, scheme)
         } else {
             claims = try unsignedRequest(params)
-            verifier = VerifierInfo(clientId: clientId, clientIdScheme: scheme, commonName: nil, signatureValid: false)
+            verifier = VerifierInfo(clientId: clientId, clientIdScheme: scheme, certificateChainDer: nil, commonName: nil, trusted: false)
         }
 
         return try build(claims, clientId, scheme, verifier)
@@ -93,13 +112,18 @@ public struct AuthorizationRequestResolver {
         return .obj(entries)
     }
 
-    private func parseSignedRequest(_ jwt: String, _ clientId: String, _ scheme: String) throws -> (JsonValue, VerifierInfo) {
+    private func parseSignedRequest(_ jwt: String, _ clientId: String, _ scheme: String) async throws -> (JsonValue, VerifierInfo) {
         let jws = try Jws.parse(jwt)
         guard let text = String(bytes: jws.payloadBytes, encoding: .utf8),
               let claims = try? JsonValue.parse(text), case .obj = claims
         else { throw VpError.invalidRequest("request object payload must be JSON") }
-        // x509_san_dns verification requires X.509 parsing (trust module, M3).
-        return (claims, VerifierInfo(clientId: clientId, clientIdScheme: scheme, commonName: nil, signatureValid: false))
+        let verifier: VerifierInfo
+        if let trust {
+            verifier = try await trust.verifyRequestObject(jws, clientId: clientId, scheme: scheme)
+        } else {
+            verifier = VerifierInfo(clientId: clientId, clientIdScheme: scheme, certificateChainDer: jws.x5c, commonName: nil, trusted: false)
+        }
+        return (claims, verifier)
     }
 
     private func fetchRequestObject(_ url: String) async throws -> String {

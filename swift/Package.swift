@@ -11,10 +11,12 @@ let package = Package(
         .library(name: "SdJwt", targets: ["SdJwt"]),
         .library(name: "OpenID4VCI", targets: ["OpenID4VCI"]),
         .library(name: "OpenID4VP", targets: ["OpenID4VP"]),
+        .library(name: "Trust", targets: ["Trust"]),
         .library(name: "WalletTestKit", targets: ["WalletTestKit"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
+        .package(url: "https://github.com/apple/swift-certificates.git", from: "1.0.0"),
     ],
     targets: [
         .target(
@@ -36,6 +38,14 @@ let package = Package(
             dependencies: ["WalletAPI", "SdJwt", "CborCose", .product(name: "Crypto", package: "swift-crypto")]
         ),
         .target(
+            name: "Trust",
+            dependencies: [
+                "OpenID4VP", "SdJwt", "CborCose",
+                .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "X509", package: "swift-certificates"),
+            ]
+        ),
+        .target(
             name: "WalletTestKit",
             dependencies: ["WalletAPI", .product(name: "Crypto", package: "swift-crypto")]
         ),
@@ -49,5 +59,10 @@ let package = Package(
         .testTarget(name: "SdJwtTests", dependencies: ["SdJwt", "WalletTestKit"]),
         .testTarget(name: "OpenID4VCITests", dependencies: ["OpenID4VCI", "WalletTestKit"]),
         .testTarget(name: "OpenID4VPTests", dependencies: ["OpenID4VP", "WalletTestKit"]),
+        .testTarget(
+            name: "TrustTests",
+            dependencies: ["Trust", "WalletTestKit", .product(name: "X509", package: "swift-certificates")],
+            resources: [.copy("Resources/pid_issuer_ca_ut_02.der")]
+        ),
     ]
 )

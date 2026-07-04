@@ -18,7 +18,7 @@
 | Token Status List | IETF 최종 단계 — M6 시작 시 RFC 여부 재확인 | ⬜ M6 |
 | ISO/IEC 18013-5 | :2021 (+ 18013-7 / DC API Handover) | ⬜ M4–M5 |
 | W3C Digital Credentials API | Android CredMan / iOS 26 IdentityDocumentServices | ⬜ M5b (어댑터) |
-| Trust (X.509) | RFC 5280 PKIX 체인 검증, SD-JWT VC issuer x5c, OpenID4VP x509_san_dns/x509_hash | 🔶 **Kotlin `trust` 모듈 완료** — PKIX 체인 검증(JCA), X5cIssuerKeyResolver, X509RequestVerifier(san_dns+hash). **실물 EUDI IACA(PID Issuer CA-UT 02)에 이슈어 PID + verifier 요청 둘 다 체인 검증 통과.** Swift는 swift-certificates 미러 예정. LOTL 자동 소비·CRL은 잔여 |
+| Trust (X.509) | RFC 5280 PKIX 체인 검증, SD-JWT VC issuer x5c, OpenID4VP x509_san_dns/x509_hash | ✅ **`trust` 모듈 양 언어 완료** — 체인 검증(Kotlin JCA / Swift swift-certificates), X5cIssuerKeyResolver, X509RequestVerifier(san_dns+hash). **실물 EUDI IACA(PID Issuer CA-UT 02)에 이슈어 PID + verifier 요청 둘 다 체인 검증 통과.** LOTL 자동 소비·CRL/OCSP는 M6 |
 | ARF | 2.7.x 추적 | 문서 단계 |
 
 미결 인터롭 포인트 (구현은 양쪽 다 있음, 핀만 남음):
@@ -29,8 +29,6 @@
 | 갭 | 필요 시점 | 상태 |
 |---|---|---|
 | **JWE** (ECDH-ES + A128/256GCM — VP 응답 암호화 direct_post.jwt) | **M3 필수 경로** | 계획됨 |
-| x5c 이슈어 키 해석 + 체인 검증, VP 요청 x509_san_dns/x509_hash | trust 모듈 | **Kotlin 완료 (2026-07-04)** — trust 모듈, 실물 EUDI IACA 체인 검증. **Swift 미러(swift-certificates)만 잔여** |
-| Swift trust 모듈 (swift-certificates) | trust 모듈 계속 | 계획됨 — Kotlin trust와 동일 API(TrustAnchors, X509ChainValidator, X5cIssuerKeyResolver, X509RequestVerifier) |
 | Trust list(LOTL/ETSI TS 119 612) 자동 소비, CRL/OCSP 실효성 검사 | M6 하드닝 | 계획됨 (현재는 신뢰앵커를 호스트가 주입, 체인 검증만) |
 | **mdoc DCQL claim path 규칙** (M4) | M4 (mdoc 포맷과) | 계획됨. mso_mdoc claim path는 **앞 두 요소가 반드시 문자열**(namespace + element_id). base 스펙은 정확히 2, 그러나 **Lukas의 릴렉스(`>=2`, upstream iOS 머지)를 채택** — 세 번째부터는 element의 구조화된 값 안으로 들어가는 index/**null 와일드카드**/values 허용(null-match 기능의 본질). `intent_to_retain`은 mdoc 전용. 현행 DcqlEngine 경로 해석기는 이미 >=2·와일드카드를 지원하므로, M4에선 mso_mdoc 쿼리에 "앞 둘=문자열" 검증만 추가하면 됨 |
 | VCI deferred(transaction_id 폴링), batch(>1 proof), notification 엔드포인트 | 실전 심화 | 계획됨 (auth code·PAR·PKCE·DPoP는 ✅ 라이브 검증) |
@@ -44,4 +42,4 @@
 | `_sd_alg` sha-384/512 | — | 의도적 제외 (HAIP는 sha-256; 명시적 거부함) |
 | JSON: >2^53 비정수 정밀도(BigDecimal), JWS JSON 직렬화 변형 | — | 의도적 제외 (토큰 페이로드에 불필요) |
 
-해결된 갭 (이 레지스터가 작동한 기록, 전부 2026-07-04): JSON 중복 키 거부(claim smuggling 방어) · JWS 미지 `crit` 거부 · **decoy digests 발급 생성** · **JWS x5c 헤더 파싱** · **SD-JWT VC typ에서 레거시 `vc+sd-jwt` 제거** · **VCI authorization code + PAR 그랜트** · **scope 선호 인가요청**(authorization_details는 EUDI 이슈어가 500 — favorScopes로 수정) · **오퍼 딥링크 해석**(resolveCredentialOffer) · **실제 PID 라이브 발급·검증 완료**(x5c 리프 키로 서명 검증, 클레임 추출) — 실 이슈어 인터롭에서 발견·수정, 테스트 포함.
+해결된 갭 (이 레지스터가 작동한 기록, 전부 2026-07-04): JSON 중복 키 거부(claim smuggling 방어) · JWS 미지 `crit` 거부 · **decoy digests 발급 생성** · **JWS x5c 헤더 파싱** · **SD-JWT VC typ에서 레거시 `vc+sd-jwt` 제거** · **VCI authorization code + PAR 그랜트** · **scope 선호 인가요청**(authorization_details는 EUDI 이슈어가 500 — favorScopes로 수정) · **오퍼 딥링크 해석**(resolveCredentialOffer) · **실제 PID 라이브 발급·검증 완료** · **trust 모듈 양 언어 완료**(x5c 이슈어 키+체인검증, VP 요청 x509_san_dns/x509_hash, 실물 EUDI IACA에 이슈어+verifier 둘 다 라이브 체인검증) — 실 인프라 인터롭에서 발견·수정, 테스트 포함.

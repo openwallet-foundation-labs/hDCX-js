@@ -91,6 +91,13 @@ public struct Jws {
     public let payloadB64: String
     public let signature: [UInt8]
 
+    public init(header: JsonValue, headerB64: String, payloadB64: String, signature: [UInt8]) {
+        self.header = header
+        self.headerB64 = headerB64
+        self.payloadB64 = payloadB64
+        self.signature = signature
+    }
+
     public var payloadBytes: [UInt8] {
         (try? Base64Url.decode(payloadB64)) ?? []
     }
