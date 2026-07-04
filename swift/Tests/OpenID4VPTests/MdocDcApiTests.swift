@@ -51,7 +51,7 @@ final class MdocDcApiTests: XCTestCase {
         guard case let .bytes(hash) = handover[1] else { return XCTFail() }
         XCTAssertEqual(32, hash.count)
 
-        guard case let .array(iso) = try Oid4vpSessionTranscript.dcApiIsoMdoc(encryptionInfoBase64: "ZW5j", origin: origin),
+        guard case let .array(iso) = try MDoc.MdocSessionTranscript.dcApiIsoMdoc(encryptionInfoBase64: "ZW5j", origin: origin),
               case let .array(isoHandover) = iso[2] else { return XCTFail() }
         XCTAssertEqual(.text("dcapi"), isoHandover[0])
     }

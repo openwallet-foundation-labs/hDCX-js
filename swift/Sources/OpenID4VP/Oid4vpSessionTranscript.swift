@@ -31,12 +31,6 @@ public enum Oid4vpSessionTranscript {
         return try sessionTranscript("OpenID4VPDCAPIHandover", handoverInfo)
     }
 
-    /// SessionTranscript for the ISO `org-iso-mdoc` DC API protocol (ISO/IEC TS 18013-7:2025 Annex C):
-    /// `["dcapi", SHA-256(CBOR([base64url(EncryptionInfo), origin]))]`.
-    public static func dcApiIsoMdoc(encryptionInfoBase64: String, origin: String) throws -> Cbor {
-        try sessionTranscript("dcapi", .array([.text(encryptionInfoBase64), .text(origin)]))
-    }
-
     private static func sessionTranscript(_ handoverType: String, _ handoverInfo: Cbor) throws -> Cbor {
         let hash = [UInt8](SHA256.hash(data: Data(try CborEncoder.encode(handoverInfo))))
         return .array([.null, .null, .array([.text(handoverType), .bytes(hash)])])
