@@ -23,6 +23,19 @@ public struct CredentialsService {
         try await store.get(id)?.toCredential()
     }
 
+    /// The raw serialized credential, for export / backup / inspection: the SD-JWT VC compact
+    /// serialization for SD-JWT, or the base64url-encoded issuer-signed CBOR for mdoc. Nil if
+    /// the credential is unknown or not yet issued.
+    public func export(_ id: CredentialId) async throws -> String? {
+        guard let envelope = try await store.get(id),
+              case let .issued(_, instances) = envelope.lifecycle,
+              let payload = instances.first?.payload else { return nil }
+        switch envelope.format {
+        case .sdJwtVc: return String(decoding: payload, as: UTF8.self)
+        case .msoMdoc: return Base64Url.encode(payload)
+        }
+    }
+
     public func delete(_ id: CredentialId) async throws {
         try await store.delete(id)
     }

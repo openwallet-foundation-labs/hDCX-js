@@ -317,8 +317,15 @@ private fun CredentialsScreen(wallet: Wallet, refreshKey: Int) {
         CredentialDetailDialog(
             c = c,
             onCopy = {
-                clipboard.setText(AnnotatedString(credentialText(c)))
-                LogStore.log("Copied credential ${c.id.value}")
+                scope.launch {
+                    val raw = runCatching { wallet.credentials.export(c.id) }.getOrNull()
+                    if (raw.isNullOrEmpty()) {
+                        LogStore.log("❌ export: nothing to copy for ${c.id.value}")
+                    } else {
+                        clipboard.setText(AnnotatedString(raw))
+                        LogStore.log("Copied raw credential ${c.id.value} (${raw.length} chars)")
+                    }
+                }
             },
             onDelete = {
                 detail = null
@@ -452,11 +459,6 @@ private fun TrustBadge(trusted: Boolean) {
     }
 }
 
-private fun credentialText(c: Credential): String = buildString {
-    appendLine("${formatLabel(c.format)} · ${credentialTitle(c)}")
-    c.issuer?.displayName?.let { appendLine("Issuer: $it") }
-    (c.lifecycle as? Lifecycle.Issued)?.claims?.forEach { appendLine("${claimLabel(c, it.path)}: ${it.value.display()}") }
-}
 
 @Composable
 private fun TransactionsScreen(wallet: Wallet, refreshKey: Int) {

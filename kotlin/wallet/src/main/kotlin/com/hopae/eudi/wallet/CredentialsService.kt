@@ -1,10 +1,13 @@
 package com.hopae.eudi.wallet
 
+import com.hopae.eudi.wallet.sdjwt.Base64Url
 import com.hopae.eudi.wallet.sdjwt.JsonValue
+import com.hopae.eudi.wallet.spi.CredentialFormat
 import com.hopae.eudi.wallet.spi.CredentialId
 import com.hopae.eudi.wallet.status.StatusListClient
 import com.hopae.eudi.wallet.store.CredentialStore
 import com.hopae.eudi.wallet.store.CredentialStoreChange
+import com.hopae.eudi.wallet.store.EnvelopeLifecycle
 import com.hopae.eudi.wallet.vp.DcqlEngine
 import com.hopae.eudi.wallet.vp.DcqlQuery
 import kotlinx.coroutines.flow.Flow
@@ -21,6 +24,20 @@ class CredentialsService internal constructor(
         store.list().map { it.toCredential() }.filter { filter.matches(it) }
 
     suspend fun get(id: CredentialId): Credential? = store.get(id)?.toCredential()
+
+    /**
+     * The raw serialized credential, for export / backup / inspection: the SD-JWT VC compact
+     * serialization (`<jwt>~<disclosure>~…`) for SD-JWT, or the base64url-encoded issuer-signed CBOR
+     * for mdoc. Returns null if the credential is unknown or not yet issued.
+     */
+    suspend fun export(id: CredentialId): String? {
+        val envelope = store.get(id) ?: return null
+        val payload = (envelope.lifecycle as? EnvelopeLifecycle.Issued)?.instances?.firstOrNull()?.payload ?: return null
+        return when (envelope.format) {
+            is CredentialFormat.SdJwtVc -> payload.decodeToString()
+            is CredentialFormat.MsoMdoc -> Base64Url.encode(payload)
+        }
+    }
 
     suspend fun delete(id: CredentialId) = store.delete(id)
 
