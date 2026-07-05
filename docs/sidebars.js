@@ -13,6 +13,7 @@ const sidebars = {
       items: [
         'guides/issuance',
         'guides/presentation',
+        'guides/dc-api',
         'guides/proximity',
         'guides/trust-and-audit',
       ],
