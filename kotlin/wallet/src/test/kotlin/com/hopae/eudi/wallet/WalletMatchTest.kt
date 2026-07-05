@@ -96,5 +96,8 @@ class WalletMatchTest {
         val mdlQuery = """{"credentials":[{"id":"q","format":"mso_mdoc","meta":{"doctype_value":"org.iso.18013.5.1.mDL"},"claims":[{"path":["org.iso.18013.5.1","family_name"]}]}]}"""
         val m2 = wallet.credentials.match(mdlQuery)
         assertEquals(mdlId, m2.byQuery.getValue("q").single().credential.id)
+
+        // status — no status_list claim → Valid (no network)
+        assertEquals(CredentialStatus.Valid, wallet.credentials.status(pidId))
     }
 }
