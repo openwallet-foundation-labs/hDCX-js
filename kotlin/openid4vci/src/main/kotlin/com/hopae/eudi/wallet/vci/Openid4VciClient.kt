@@ -316,6 +316,49 @@ class Openid4VciClient(
             accessToken = token.accessToken,
         )
         return CredentialResponse.fromObj(parseObj(credResp, "credential response"), requestFormat)
+            .withContext(token.accessToken, issuerMeta.credentialIssuer, requestFormat)
+    }
+
+    /**
+     * Polls the deferred credential endpoint (OpenID4VCI §9) for a credential the issuer was not
+     * yet ready to issue. Pass the [CredentialResponse] whose [CredentialResponse.isDeferred] is true.
+     * @throws VciException.IssuancePending if the issuer is still not ready (retry later).
+     */
+    suspend fun fetchDeferredCredential(deferred: CredentialResponse, keys: IssuanceKeys): CredentialResponse {
+        val transactionId = deferred.transactionId
+            ?: throw VciException.ProtocolError("response has no transaction_id to defer")
+        val accessToken = deferred.accessToken ?: throw VciException.ProtocolError("deferred response has no access token")
+        val issuerMeta = loadIssuerMetadata(deferred.credentialIssuer!!)
+        val endpoint = issuerMeta.deferredCredentialEndpoint
+            ?: throw VciException.MetadataError("issuer has no deferred_credential_endpoint")
+
+        val dpop = DpopProver(keys.dpopSigner, keys.dpopPublicKey, rng, clock)
+        val body = JsonValue.Obj(listOf("transaction_id" to JsonValue.Str(transactionId))).serialize()
+        val response = try {
+            postJsonWithDpop(endpoint, body, dpop, accessToken)
+        } catch (e: VciException.OAuthError) {
+            if (e.oauthError == "issuance_pending") throw VciException.IssuancePending else throw e
+        }
+        return CredentialResponse.fromObj(parseObj(response, "deferred credential"), deferred.requestedFormat)
+            .withContext(accessToken, deferred.credentialIssuer, deferred.requestedFormat)
+    }
+
+    /**
+     * Sends an issuance notification (OpenID4VCI §10) — the wallet reports the outcome of storing the
+     * credential to the issuer's notification endpoint. No-op if the response carried no notification_id.
+     */
+    suspend fun sendNotification(response: CredentialResponse, event: NotificationEvent, keys: IssuanceKeys) {
+        val notificationId = response.notificationId ?: return
+        val accessToken = response.accessToken ?: throw VciException.ProtocolError("response has no access token")
+        val issuerMeta = loadIssuerMetadata(response.credentialIssuer!!)
+        val endpoint = issuerMeta.notificationEndpoint
+            ?: throw VciException.MetadataError("issuer has no notification_endpoint")
+
+        val dpop = DpopProver(keys.dpopSigner, keys.dpopPublicKey, rng, clock)
+        val body = JsonValue.Obj(
+            listOf("notification_id" to JsonValue.Str(notificationId), "event" to JsonValue.Str(event.wire))
+        ).serialize()
+        checkStatus(postJsonWithDpop(endpoint, body, dpop, accessToken), endpoint)
     }
 
     /* ---------------- HTTP helpers ---------------- */

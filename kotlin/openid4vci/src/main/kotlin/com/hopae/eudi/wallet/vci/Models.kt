@@ -59,6 +59,7 @@ class CredentialIssuerMetadata(
     val credentialEndpoint: String,
     val nonceEndpoint: String?,
     val deferredCredentialEndpoint: String?,
+    val notificationEndpoint: String?,
     val authorizationServers: List<String>,
     val credentialConfigurationsSupported: Map<String, CredentialConfiguration>,
 ) {
@@ -76,6 +77,7 @@ class CredentialIssuerMetadata(
                 credentialEndpoint = o.requireStr("credential_endpoint", "issuer metadata"),
                 nonceEndpoint = o.str("nonce_endpoint"),
                 deferredCredentialEndpoint = o.str("deferred_credential_endpoint"),
+                notificationEndpoint = o.str("notification_endpoint"),
                 authorizationServers = o.arrStr("authorization_servers") ?: listOf(issuer),
                 credentialConfigurationsSupported = configs,
             )
@@ -151,7 +153,17 @@ class CredentialResponse(
     val credentials: List<IssuedCredential>,
     val transactionId: String?,
     val notificationId: String?,
+    /** Context for follow-ups (deferred poll, notification) — set by the client, not parsed. */
+    val accessToken: String? = null,
+    val credentialIssuer: String? = null,
+    val requestedFormat: String = "dc+sd-jwt",
 ) {
+    /** True when the issuer deferred issuance (returned a transaction_id, no credential yet). */
+    val isDeferred: Boolean get() = credentials.isEmpty() && transactionId != null
+
+    internal fun withContext(accessToken: String?, credentialIssuer: String?, requestedFormat: String) =
+        CredentialResponse(credentials, transactionId, notificationId, accessToken, credentialIssuer, requestedFormat)
+
     companion object {
         fun fromObj(o: JsonValue.Obj, requestedFormat: String): CredentialResponse {
             // OpenID4VCI 1.0: "credentials" is an array of objects each with a "credential" member.

@@ -57,6 +57,8 @@ class MockIssuer(
             path == "/token" -> handleToken(request)
             path == "/nonce" -> handleNonce()
             path == "/credential" -> handleCredential(request)
+            path == "/deferred_credential" -> handleDeferred(request)
+            path == "/notification" -> handleNotification(request)
             path == "/par" -> handlePar(request)
             path.startsWith("/authorize") -> handleAuthorize(request)
             else -> HttpResponse(404, emptyList(), "not found".encodeToByteArray())
@@ -134,6 +136,36 @@ class MockIssuer(
     var seenProofCount: Int = 0
         private set
 
+    /** When true, /credential defers (returns a transaction_id); the credential comes from /deferred_credential. */
+    var deferMode: Boolean = false
+    private var deferredHolderKey: EcPublicKey? = null
+    private var deferredPollCount = 0
+    /** Test-observable: (notification_id, event) of the last notification received. */
+    var seenNotification: Pair<String, String>? = null
+        private set
+
+    private suspend fun handleDeferred(request: HttpRequest): HttpResponse {
+        val token = accessToken ?: return HttpResponse(401, emptyList(), "no token".encodeToByteArray())
+        require(request.headers.any { it.first == "Authorization" && it.second == "DPoP $token" }) { "bad auth" }
+        verifyDpop(request, "POST", "$issuer/deferred_credential", accessToken = token)
+        val body = JsonValue.parse(request.body!!.decodeToString()) as JsonValue.Obj
+        require((body["transaction_id"] as JsonValue.Str).value == "tx-1") { "unknown transaction_id" }
+        deferredPollCount++
+        // First poll: not ready yet; second poll: issue.
+        if (deferredPollCount < 2) {
+            return HttpResponse(400, listOf("Content-Type" to "application/json"), """{"error":"issuance_pending"}""".encodeToByteArray())
+        }
+        return ok("""{"credentials":[{"credential":"${issueSdJwtVc(deferredHolderKey!!)}"}]}""")
+    }
+
+    private fun handleNotification(request: HttpRequest): HttpResponse {
+        val token = accessToken ?: return HttpResponse(401, emptyList(), "no token".encodeToByteArray())
+        require(request.headers.any { it.first == "Authorization" && it.second == "DPoP $token" }) { "bad auth" }
+        val body = JsonValue.parse(request.body!!.decodeToString()) as JsonValue.Obj
+        seenNotification = (body["notification_id"] as JsonValue.Str).value to (body["event"] as JsonValue.Str).value
+        return HttpResponse(204, emptyList(), ByteArray(0))
+    }
+
     private suspend fun handleCredential(request: HttpRequest): HttpResponse {
         val token = accessToken ?: return HttpResponse(401, emptyList(), "no token".encodeToByteArray())
         require(request.headers.any { it.first == "Authorization" && it.second == "DPoP $token" }) { "bad auth" }
@@ -143,6 +175,12 @@ class MockIssuer(
         val proofs = ((body["proofs"] as JsonValue.Obj)["jwt"] as JsonValue.Arr).items.map { (it as JsonValue.Str).value }
         seenProofCount = proofs.size
         seenKeyAttestation = (Jws.parse(proofs.first()).header["key_attestation"] as? JsonValue.Str)?.value
+
+        if (deferMode) {
+            // Defer: verify the proof, remember the holder key, return a transaction_id (no credential yet).
+            deferredHolderKey = verifyKeyProof(proofs.first())
+            return ok("""{"transaction_id":"tx-1","notification_id":"n-1"}""")
+        }
 
         // One credential per proof (batch issuance), each bound to that proof's holder key.
         val credentials = proofs.map { proof -> """{"credential":"${issueSdJwtVc(verifyKeyProof(proof))}"}""" }.joinToString(",")
@@ -204,6 +242,8 @@ class MockIssuer(
         {"credential_issuer":"$issuer",
          "credential_endpoint":"$issuer/credential",
          "nonce_endpoint":"$issuer/nonce",
+         "deferred_credential_endpoint":"$issuer/deferred_credential",
+         "notification_endpoint":"$issuer/notification",
          "authorization_servers":["$issuer"],
          "credential_configurations_supported":{
            "eu.europa.ec.eudi.pid.1":{"format":"dc+sd-jwt","vct":"eu.europa.ec.eudi.pid.1",
