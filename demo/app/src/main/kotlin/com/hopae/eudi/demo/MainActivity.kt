@@ -29,6 +29,6 @@ class MainActivity : ComponentActivity() {
     /** Resume an issuance session waiting on the authorization-code browser redirect. */
     private fun handleAuthRedirect(intent: Intent?) {
         val data = intent?.data ?: return
-        if (data.scheme == "eudi-wallet") PendingAuth.complete(data.toString())
+        if (data.scheme == "eu.europa.ec.euidi") PendingAuth.complete(data.toString())
     }
 }

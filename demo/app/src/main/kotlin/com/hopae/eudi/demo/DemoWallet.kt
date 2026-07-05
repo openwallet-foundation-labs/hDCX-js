@@ -6,6 +6,7 @@ import com.hopae.eudi.demo.adapters.FileStorageDriver
 import com.hopae.eudi.demo.adapters.FileTransactionLogStore
 import com.hopae.eudi.demo.adapters.LogWalletLogger
 import com.hopae.eudi.demo.adapters.OkHttpTransport
+import com.hopae.eudi.wallet.IssuanceConfig
 import com.hopae.eudi.wallet.TransactionLogConfig
 import com.hopae.eudi.wallet.Wallet
 import com.hopae.eudi.wallet.WalletConfig
@@ -35,8 +36,12 @@ object DemoWallet {
             LogStore.attach(File(logsDir, "debug.log"))
             transactionStore = FileTransactionLogStore(File(logsDir, "transactions.log"))
             Wallet.create(
-                // Debug wallet: also log presentations that fail at final submission (opt-in).
-                config = WalletConfig(transactionLog = TransactionLogConfig(recordFailures = true)),
+                config = WalletConfig(
+                    // Authorization-code redirect — matches the EUDI reference wallet's scheme.
+                    issuance = IssuanceConfig(redirectUri = "eu.europa.ec.euidi://authorization"),
+                    // Debug wallet: also log presentations that fail at final submission (opt-in).
+                    transactionLog = TransactionLogConfig(recordFailures = true),
+                ),
                 ports = WalletPorts(
                     secureAreas = listOf(AndroidKeystoreSecureArea()),
                     storage = FileStorageDriver(File(filesDir, "wallet")),

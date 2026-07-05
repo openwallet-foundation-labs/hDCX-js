@@ -23,7 +23,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="eudi-wallet" android:host="authorize" />
+                <data android:scheme="eu.europa.ec.euidi" android:host="authorization" />
             </intent-filter>
         </activity>
         <activity

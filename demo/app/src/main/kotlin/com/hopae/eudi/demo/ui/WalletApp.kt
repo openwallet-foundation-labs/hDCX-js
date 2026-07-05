@@ -271,12 +271,14 @@ private suspend fun runIssuance(
     }.onFailure { LogStore.log("❌ Issuance: ${it.message}") }
 }
 
+// Invocation schemes match the EUDI reference wallet.
 private fun isOffer(uri: String) =
-    uri.startsWith("openid-credential-offer://") || uri.contains("credential_offer=") || uri.contains("credential_offer_uri=")
+    uri.startsWith("openid-credential-offer://") || uri.startsWith("haip-vci://") ||
+        uri.contains("credential_offer=") || uri.contains("credential_offer_uri=")
 
 private fun isVpRequest(uri: String) =
     uri.startsWith("openid4vp://") || uri.startsWith("eudi-openid4vp://") || uri.startsWith("mdoc-openid4vp://") ||
-        uri.startsWith("haip://") || uri.contains("request_uri=") || uri.contains("response_uri=")
+        uri.startsWith("haip-vp://") || uri.contains("request_uri=") || uri.contains("response_uri=")
 
 @Composable
 private fun CredentialsScreen(wallet: Wallet, refreshKey: Int) {
