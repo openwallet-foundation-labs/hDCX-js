@@ -12,7 +12,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val wallet = DemoWallet.get(this)
-        handleAuthRedirect(intent)
+        handleIntentLink(intent)
         setContent {
             MaterialTheme {
                 Surface { WalletApp(wallet) }
@@ -23,12 +23,16 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleAuthRedirect(intent)
+        handleIntentLink(intent)
     }
 
-    /** Resume an issuance session waiting on the authorization-code browser redirect. */
-    private fun handleAuthRedirect(intent: Intent?) {
+    /**
+     * Routes an incoming deep link: the authorization-code redirect resumes the parked issuance session;
+     * an offer / presentation link (haip-vci, haip-vp, openid-credential-offer, …) is handed to the UI.
+     */
+    private fun handleIntentLink(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme == "eu.europa.ec.euidi") PendingAuth.complete(data.toString())
+        else IncomingLink.post(data.toString())
     }
 }

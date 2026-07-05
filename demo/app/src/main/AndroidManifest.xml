@@ -25,6 +25,18 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="eu.europa.ec.euidi" android:host="authorization" />
             </intent-filter>
+            <!-- Credential-offer and presentation invocation links (match the EUDI reference wallet). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="openid-credential-offer" />
+                <data android:scheme="haip-vci" />
+                <data android:scheme="openid4vp" />
+                <data android:scheme="eudi-openid4vp" />
+                <data android:scheme="mdoc-openid4vp" />
+                <data android:scheme="haip-vp" />
+            </intent-filter>
         </activity>
         <activity
             android:name=".PortraitCaptureActivity"

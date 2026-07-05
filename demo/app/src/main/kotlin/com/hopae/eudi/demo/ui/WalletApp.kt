@@ -60,6 +60,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hopae.eudi.demo.DemoWallet
+import com.hopae.eudi.demo.IncomingLink
 import com.hopae.eudi.demo.LogStore
 import com.hopae.eudi.demo.PendingAuth
 import com.hopae.eudi.demo.PortraitCaptureActivity
@@ -106,15 +107,12 @@ fun WalletApp(wallet: Wallet) {
         }.onFailure { LogStore.log("❌ open browser: ${it.message}") }
     }
 
-    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
-        val uri = result.contents
-        if (uri == null) { LogStore.log("Scan cancelled"); return@rememberLauncherForActivityResult }
-        LogStore.log("Scanned: ${uri.take(140)}${if (uri.length > 140) "…" else ""}")
+    fun handleUri(uri: String, source: String) {
+        LogStore.log("$source: ${uri.take(140)}${if (uri.length > 140) "…" else ""}")
         when {
             isOffer(uri) -> scope.launch {
                 busy = "Resolving offer…"
                 runCatching {
-                    LogStore.log("Resolving credential offer…")
                     val offer = wallet.issuance.resolveOffer(uri)
                     LogStore.log("Offer: issuer=${offer.credentialIssuer}, configs=${offer.credentialConfigurationIds}, txCode=${offer.requiresTxCode}")
                     offerToConfirm = offer   // show the offer confirmation dialog before issuing
@@ -124,7 +122,6 @@ fun WalletApp(wallet: Wallet) {
             isVpRequest(uri) -> scope.launch {
                 busy = "Resolving request…"
                 runCatching {
-                    LogStore.log("Resolving presentation request…")
                     val session = wallet.presentation.start(uri)
                     when (val r = session.state.first { it is PresentationState.RequestResolved || it is PresentationState.Failed }) {
                         is PresentationState.RequestResolved -> {
@@ -137,8 +134,20 @@ fun WalletApp(wallet: Wallet) {
                 }.onFailure { LogStore.log("❌ presentation: ${it.message}") }
                 busy = null
             }
-            else -> LogStore.log("⚠️ Unrecognized QR (not a credential offer or VP request)")
+            else -> LogStore.log("⚠️ Unrecognized link (not a credential offer or VP request)")
         }
+    }
+
+    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val uri = result.contents
+        if (uri == null) LogStore.log("Scan cancelled") else handleUri(uri, "Scanned")
+    }
+
+    val incoming by IncomingLink.flow.collectAsState()
+    LaunchedEffect(incoming) {
+        val uri = incoming ?: return@LaunchedEffect
+        IncomingLink.consume()
+        handleUri(uri, "Opened link")
     }
 
     Scaffold(
