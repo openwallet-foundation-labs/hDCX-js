@@ -13,6 +13,7 @@ public struct Wallet {
     public let credentials: CredentialsService
     public let issuance: IssuanceService
     public let presentation: PresentationService
+    public let proximity: ProximityService
     private let ports: WalletPorts
 
     /// Idempotent; no resources held yet.
@@ -39,9 +40,11 @@ public struct Wallet {
         let vp = Openid4VpClient(http: ports.http, clock: clockSeconds, trust: vpTrust)
         let presentation = PresentationService(vp: vp, store: store, txlog: ports.transactionLog,
                                                secureAreas: ports.secureAreas, clock: ports.clock, rng: ports.rng)
+        let proximity = ProximityService(store: store, txlog: ports.transactionLog,
+                                         secureAreas: ports.secureAreas, clock: ports.clock, rng: ports.rng)
 
         return Wallet(credentials: CredentialsService(store: store, statusClient: statusClient),
-                      issuance: issuance, presentation: presentation, ports: ports)
+                      issuance: issuance, presentation: presentation, proximity: proximity, ports: ports)
     }
 }
 

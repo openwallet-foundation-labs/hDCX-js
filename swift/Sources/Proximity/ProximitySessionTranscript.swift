@@ -26,4 +26,17 @@ public enum DeviceEngagement {
         let engagement = Cbor.map([(.int(0), .text("1.0")), (.int(1), security)])
         return try CborEncoder.encode(engagement)
     }
+
+    /// Extracts the mdoc's ephemeral public key (EDeviceKey) from a QR `DeviceEngagement` — the reader side.
+    public static func parseEDeviceKey(_ engagement: [UInt8]) throws -> EcPublicKey {
+        guard case let .map(entries) = try CborDecoder.decode(engagement) else {
+            throw ProximityError("DeviceEngagement must be a map")
+        }
+        guard let security = entries.first(where: { if case let .uint(k) = $0.0 { return k == 1 }; return false })?.1,
+              case let .array(items) = security, items.count >= 2,
+              case let .tagged(_, inner) = items[1], case let .bytes(keyBytes) = inner else {
+            throw ProximityError("missing EDeviceKey")
+        }
+        return try CoseKey.decode(try CborDecoder.decode(keyBytes))
+    }
 }

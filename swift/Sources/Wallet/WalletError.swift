@@ -18,3 +18,10 @@ public enum PresentationError: Error, Equatable {
     case responseRejected(String)
     case unexpected(String)
 }
+
+/// Typed ISO 18013-5 proximity errors (API-CONTRACT.md §8).
+public enum ProximityError: Error, Equatable {
+    case sessionFailed(String)
+    case noMatchingCredential(String)
+    case unexpected(String)
+}
