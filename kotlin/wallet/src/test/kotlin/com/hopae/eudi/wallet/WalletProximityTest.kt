@@ -3,10 +3,14 @@ package com.hopae.eudi.wallet
 import com.hopae.eudi.wallet.cbor.Cbor
 import com.hopae.eudi.wallet.cbor.CborDecoder
 import com.hopae.eudi.wallet.cbor.CborEncoder
+import com.hopae.eudi.wallet.cbor.cose.CoseAlgorithm
 import com.hopae.eudi.wallet.cbor.cose.CoseSign1
+import com.hopae.eudi.wallet.cbor.cose.CoseSigner
+import com.hopae.eudi.wallet.cbor.cose.Der
 import com.hopae.eudi.wallet.mdoc.IssuerSigned
 import com.hopae.eudi.wallet.mdoc.MdocReader
 import com.hopae.eudi.wallet.mdoc.MdocTestIssuer
+import com.hopae.eudi.wallet.mdoc.ReaderAuthSigner
 import com.hopae.eudi.wallet.mdoc.RequestedDocument
 import com.hopae.eudi.wallet.proximity.DeviceEngagement
 import com.hopae.eudi.wallet.proximity.EphemeralKeyPair
@@ -28,9 +32,12 @@ import com.hopae.eudi.wallet.store.CredentialStore
 import com.hopae.eudi.wallet.store.EnvelopeLifecycle
 import com.hopae.eudi.wallet.testkit.InMemoryStorageDriver
 import com.hopae.eudi.wallet.testkit.SoftwareSecureArea
+import com.hopae.eudi.wallet.trust.TestCerts
 import com.hopae.eudi.wallet.txlog.InMemoryTransactionLogStore
 import com.hopae.eudi.wallet.txlog.TransactionStatus
 import kotlinx.coroutines.channels.Channel
+import java.security.PrivateKey
+import java.security.Signature
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -127,5 +134,70 @@ class WalletProximityTest {
         val terminal = withTimeout(15_000) { session.state.first { it.isTerminal } }
         assertTrue(terminal is ProximityState.Completed, "terminal: $terminal")
         assertEquals(TransactionStatus.SUCCESS, logStore.all().single().status)
+    }
+
+    private fun readerCoseSigner(priv: PrivateKey): CoseSigner = object : CoseSigner {
+        override val algorithm = CoseAlgorithm.ES256
+        override suspend fun sign(toBeSigned: ByteArray): ByteArray =
+            Signature.getInstance("SHA256withECDSA").run { initSign(priv); update(toBeSigned); Der.derSignatureToRaw(sign(), 32) }
+    }
+
+    @Test
+    fun proximityAuthenticatesTrustedReader() = runBlocking {
+        val docType = "org.iso.18013.5.1.mDL"
+        val namespace = "org.iso.18013.5.1"
+        val area = SoftwareSecureArea()
+        val storage = InMemoryStorageDriver()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val deviceKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mdocBytes = MdocTestIssuer.issue(
+            area = area, issuerKey = issuerKey, deviceKey = deviceKey.publicKey, docType = docType, namespace = namespace,
+            elements = listOf("family_name" to Cbor.Text("Han"), "given_name" to Cbor.Text("Jongho")),
+            x5chain = listOf(byteArrayOf(0x30, 0x01)),
+            signed = now, validFrom = now, validUntil = now.plusSeconds(31_536_000),
+        )
+        CredentialStore(storage).save(
+            CredentialEnvelope(
+                CredentialId("mdl-1"), CredentialFormat.MsoMdoc(docType), now,
+                EnvelopeLifecycle.Issued(CredentialPolicy(), listOf(CredentialInstance(deviceKey.handle, mdocBytes))),
+            ),
+        )
+
+        // reader authentication material: a leaf chaining to the wallet's configured reader anchor
+        val readerCa = TestCerts.makeCa("Reader Root CA")
+        val readerLeaf = TestCerts.makeLeaf(readerCa, cn = "EUDI Reader")
+        val logStore = InMemoryTransactionLogStore()
+        val wallet = Wallet.create(
+            WalletConfig(trust = TrustConfig(readerAnchorsDer = listOf(readerCa.der))),
+            WalletPorts(listOf(area), storage, noHttp, transactionLogStore = logStore),
+        )
+        val transport = TransportPair()
+        val session = wallet.proximity.present(transport.deviceSide)
+
+        val engagement = (withTimeout(15_000) { session.state.first { it is ProximityState.EngagementReady || it is ProximityState.Failed } } as ProximityState.EngagementReady).deviceEngagement
+
+        // reader signs the DeviceRequest with readerAuth (leaf + chain)
+        val eReader = EphemeralKeyPair.generate()
+        val transcript = ProximitySessionTranscript.build(engagement, eReader.publicKey)
+        val readerSession = SessionEncryption.forReader(eReader, DeviceEngagement.parseEDeviceKey(engagement), ProximitySessionTranscript.encode(transcript))
+        val mdocReader = MdocReader(readerAuth = ReaderAuthSigner(readerCoseSigner(readerLeaf.keyPair.private), listOf(readerLeaf.der)))
+        val deviceRequest = mdocReader.buildDeviceRequest(listOf(RequestedDocument(docType, mapOf(namespace to listOf("family_name")))), transcript)
+        transport.readerSend(SessionMessages.encodeEstablishment(eReader.publicKey, readerSession.encrypt(deviceRequest)))
+
+        // wallet: the reader is authenticated and trusted, with its identity surfaced for consent
+        val requestState = withTimeout(15_000) { session.state.first { it is ProximityState.RequestReceived || it is ProximityState.Failed } }
+        assertTrue(requestState is ProximityState.RequestReceived, "request: $requestState")
+        assertTrue(requestState.request.reader.trusted, "reader chaining to the anchor must be trusted")
+        assertEquals("EUDI Reader", requestState.request.reader.commonName)
+        session.respond(ProximitySelection.auto(requestState.request))
+
+        readerSession.decrypt(SessionMessages.decodeData(transport.readerReceive()))
+        withTimeout(15_000) { session.state.first { it.isTerminal } }
+
+        // audit records the trusted reader identity + certificate chain
+        val entry = logStore.all().single()
+        assertEquals(true, entry.relyingParty?.trusted)
+        assertEquals("EUDI Reader", entry.relyingParty?.name)
+        assertTrue((entry.relyingParty?.certificateChainDer?.size ?: 0) >= 1)
     }
 }

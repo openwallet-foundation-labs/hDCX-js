@@ -7,6 +7,7 @@ import com.hopae.eudi.wallet.trust.TrustAnchors
 import com.hopae.eudi.wallet.trust.X509ChainValidator
 import com.hopae.eudi.wallet.trust.X509RequestVerifier
 import com.hopae.eudi.wallet.trust.X5cIssuerKeyResolver
+import com.hopae.eudi.wallet.trust.X5cMdocReaderTrust
 import com.hopae.eudi.wallet.sdjwt.Base64Url
 import com.hopae.eudi.wallet.txlog.TransactionLog
 import com.hopae.eudi.wallet.vci.Openid4VciClient
@@ -58,19 +59,19 @@ class Wallet private constructor(
             val vci = Openid4VciClient(ports.http, ports.rng, clockSeconds, config.issuance.clientId)
             val issuance = IssuanceService(vci, store, ports.storage, ports.defaultSecureArea, scope, ports.rng, ports.clock, config.issuance.redirectUri)
 
-            // Reader trust: verify signed OpenID4VP request objects against the configured reader anchors.
-            // Unsigned requests (or no anchors) resolve with verifier.trusted == false.
-            val vpTrust = config.trust.readerAnchorsDer.takeIf { it.isNotEmpty() }?.let { anchors ->
-                X509RequestVerifier(X509ChainValidator(TrustAnchorSource { TrustAnchors.ofDer(anchors) }, at = { java.util.Date.from(ports.clock.now()) }))
+            // Reader trust: one validator over the configured reader anchors, shared by remote (signed OpenID4VP
+            // request objects) and proximity (mdoc reader authentication). No anchors → readers stay untrusted.
+            val readerValidator = config.trust.readerAnchorsDer.takeIf { it.isNotEmpty() }?.let { anchors ->
+                X509ChainValidator(TrustAnchorSource { TrustAnchors.ofDer(anchors) }, at = { java.util.Date.from(ports.clock.now()) })
             }
-            val vp = Openid4VpClient(ports.http, clockSeconds, vpTrust)
+            val vp = Openid4VpClient(ports.http, clockSeconds, readerValidator?.let { X509RequestVerifier(it) })
             val txlog = TransactionLog(
                 store = ports.transactionLogStore,
                 idGenerator = { "txn-" + Base64Url.encode(ports.rng.nextBytes(12)) },
                 clock = clockSeconds,
             )
             val presentation = PresentationService(vp, store, txlog, ports.secureAreas, scope)
-            val proximity = ProximityService(store, txlog, ports.secureAreas, scope)
+            val proximity = ProximityService(store, txlog, ports.secureAreas, scope, readerValidator?.let { X5cMdocReaderTrust(it) })
 
             return Wallet(
                 credentials = CredentialsService(store, statusClient),

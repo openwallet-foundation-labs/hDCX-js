@@ -12,9 +12,21 @@ import com.hopae.eudi.wallet.spi.CredentialId
 class ProximityRequest internal constructor(
     val documents: List<RequestedDocumentView>,
     val satisfiable: Boolean,
+    /** Who is asking — from verified reader authentication (ISO 18013-5 §9.1.4), if present and trusted. */
+    val reader: ProximityReaderInfo,
     internal val deviceRequest: DeviceRequest,
     internal val transcript: Cbor,
     internal val session: SessionEncryption,
+)
+
+/**
+ * The in-person reader's identity. [trusted] is true only when the request was reader-authenticated
+ * and the reader certificate chained to a configured reader anchor (config.trust.readerAnchorsDer).
+ */
+class ProximityReaderInfo(
+    val trusted: Boolean,
+    val commonName: String?,
+    val certificateChainDer: List<ByteArray>,
 )
 
 /** One requested document: the doctype, the elements the reader wants, and the matching stored credential. */

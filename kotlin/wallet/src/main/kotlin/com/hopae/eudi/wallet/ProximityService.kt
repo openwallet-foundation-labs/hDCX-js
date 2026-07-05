@@ -4,6 +4,8 @@ import com.hopae.eudi.wallet.cbor.Cbor
 import com.hopae.eudi.wallet.mdoc.DeviceRequest
 import com.hopae.eudi.wallet.mdoc.IssuerSigned
 import com.hopae.eudi.wallet.mdoc.MdocPresenter
+import com.hopae.eudi.wallet.mdoc.MdocReaderTrust
+import com.hopae.eudi.wallet.mdoc.ReaderAuth
 import com.hopae.eudi.wallet.proximity.DeviceEngagement
 import com.hopae.eudi.wallet.proximity.EphemeralKeyPair
 import com.hopae.eudi.wallet.proximity.ProximityException
@@ -24,6 +26,8 @@ import com.hopae.eudi.wallet.txlog.RelyingParty
 import com.hopae.eudi.wallet.txlog.TransactionLog
 import com.hopae.eudi.wallet.txlog.TransactionStatus
 import kotlinx.coroutines.CoroutineScope
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
 
 /**
  * ISO 18013-5 proximity presentation (API-CONTRACT.md §6.3). Generates device engagement, establishes the
@@ -34,6 +38,8 @@ class ProximityService internal constructor(
     private val txlog: TransactionLog,
     private val secureAreas: List<SecureArea>,
     private val scope: CoroutineScope,
+    /** Verifies reader authentication against configured reader anchors; null = no anchors, readers stay untrusted. */
+    private val readerTrust: MdocReaderTrust?,
 ) {
     /** Starts a proximity session over [transport]: engage → session → reader request → consent → reply. */
     fun present(transport: ProximityTransport): ProximitySession {
@@ -51,7 +57,7 @@ class ProximityService internal constructor(
             val request = buildRequest(deviceRequest, transcript, enc)
             when (val selection = awaitDecision(request)) {
                 null -> {
-                    recordDeclined()
+                    recordDeclined(request)
                     transport.close()
                     emit(ProximityState.Declined)
                 }
@@ -77,7 +83,27 @@ class ProximityService internal constructor(
                 candidate = findMdoc(dr.docType),
             )
         }
-        return ProximityRequest(documents, satisfiable = documents.all { it.candidate != null }, deviceRequest, transcript, session)
+        val reader = verifyReader(deviceRequest, transcript)
+        return ProximityRequest(documents, satisfiable = documents.all { it.candidate != null }, reader, deviceRequest, transcript, session)
+    }
+
+    /** Verifies reader authentication (ISO 18013-5 §9.1.4) against the configured reader anchors. */
+    private suspend fun verifyReader(deviceRequest: DeviceRequest, transcript: Cbor): ProximityReaderInfo {
+        val trust = readerTrust ?: return ProximityReaderInfo(trusted = false, commonName = null, certificateChainDer = emptyList())
+        val docRequest = deviceRequest.docRequests.firstOrNull { it.readerAuth != null }
+            ?: return ProximityReaderInfo(trusted = false, commonName = null, certificateChainDer = emptyList())
+        return runCatching {
+            val info = ReaderAuth.verify(docRequest, transcript, trust)
+            ProximityReaderInfo(info.trusted, commonNameOf(info.certificateChain), info.certificateChain ?: emptyList())
+        }.getOrElse { ProximityReaderInfo(trusted = false, commonName = null, certificateChainDer = emptyList()) }
+    }
+
+    private fun commonNameOf(chainDer: List<ByteArray>?): String? {
+        val leaf = chainDer?.firstOrNull() ?: return null
+        return runCatching {
+            val cert = CertificateFactory.getInstance("X.509").generateCertificate(leaf.inputStream()) as X509Certificate
+            Regex("CN=([^,]+)").find(cert.subjectX500Principal.name)?.groupValues?.get(1)
+        }.getOrNull()
     }
 
     private suspend fun findMdoc(docType: String): CredentialId? =
@@ -111,15 +137,20 @@ class ProximityService internal constructor(
                 claims = doc.requestedElements.flatMap { (ns, els) -> els.map { LoggedClaim(listOf(ns, it), null) } },
             )
         }
-        txlog.recordPresentation(proximityReader(), documents, TransactionStatus.SUCCESS)
+        txlog.recordPresentation(proximityReader(request), documents, TransactionStatus.SUCCESS)
     }
 
-    private suspend fun recordDeclined() {
-        txlog.recordPresentation(proximityReader(), documents = emptyList(), status = TransactionStatus.INCOMPLETE)
+    private suspend fun recordDeclined(request: ProximityRequest) {
+        txlog.recordPresentation(proximityReader(request), documents = emptyList(), status = TransactionStatus.INCOMPLETE)
     }
 
-    /** The in-person reader. Reader-auth verification against a reader anchor is a follow-up, so [trusted] is false. */
-    private fun proximityReader(): RelyingParty = RelyingParty(id = "proximity-reader", name = null, trusted = false)
+    /** The in-person reader, from verified reader authentication (unauthenticated readers stay untrusted). */
+    private fun proximityReader(request: ProximityRequest): RelyingParty = RelyingParty(
+        id = request.reader.commonName ?: "proximity-reader",
+        name = request.reader.commonName,
+        trusted = request.reader.trusted,
+        certificateChainDer = request.reader.certificateChainDer,
+    )
 
     private suspend fun <T> catchingProximity(block: suspend () -> T): T = try {
         block()
