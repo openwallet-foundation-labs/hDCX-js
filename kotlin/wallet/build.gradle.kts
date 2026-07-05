@@ -20,6 +20,7 @@ dependencies {
     implementation(project(":statuslist"))
     implementation(project(":openid4vci"))
     implementation(project(":openid4vp"))
+    implementation(project(":proximity"))
 
     testImplementation(kotlin("test"))
     testImplementation(project(":testkit"))

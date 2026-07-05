@@ -19,4 +19,10 @@ sealed class WalletError(message: String, cause: Throwable? = null) : Exception(
         class ResponseRejected(message: String, cause: Throwable? = null) : Presentation("verifier rejected the response: $message", cause)
         class Unexpected(cause: Throwable) : Presentation("unexpected presentation error: ${cause.message}", cause)
     }
+
+    sealed class Proximity(message: String, cause: Throwable? = null) : WalletError(message, cause) {
+        class SessionFailed(message: String, cause: Throwable? = null) : Proximity("proximity session failed: $message", cause)
+        class NoMatchingCredential(message: String) : Proximity("no credential for the reader request: $message")
+        class Unexpected(cause: Throwable) : Proximity("unexpected proximity error: ${cause.message}", cause)
+    }
 }

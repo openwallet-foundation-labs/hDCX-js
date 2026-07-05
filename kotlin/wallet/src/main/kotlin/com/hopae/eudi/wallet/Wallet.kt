@@ -24,6 +24,7 @@ class Wallet private constructor(
     val credentials: CredentialsService,
     val issuance: IssuanceService,
     val presentation: PresentationService,
+    val proximity: ProximityService,
     private val scope: CoroutineScope,
 ) : AutoCloseable {
 
@@ -60,11 +61,13 @@ class Wallet private constructor(
             }
             val vp = Openid4VpClient(ports.http, clockSeconds, vpTrust)
             val presentation = PresentationService(vp, store, ports.transactionLog, ports.secureAreas, scope, ports.clock, ports.rng)
+            val proximity = ProximityService(store, ports.transactionLog, ports.secureAreas, scope, ports.clock, ports.rng)
 
             return Wallet(
                 credentials = CredentialsService(store, statusClient),
                 issuance = issuance,
                 presentation = presentation,
+                proximity = proximity,
                 scope = scope,
             )
         }

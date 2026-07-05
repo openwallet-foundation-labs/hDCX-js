@@ -1,6 +1,7 @@
 package com.hopae.eudi.wallet.proximity
 
 import com.hopae.eudi.wallet.cbor.Cbor
+import com.hopae.eudi.wallet.cbor.CborDecoder
 import com.hopae.eudi.wallet.cbor.CborEncoder
 import com.hopae.eudi.wallet.cbor.cose.CoseKey
 import com.hopae.eudi.wallet.cbor.cose.EcPublicKey
@@ -37,5 +38,16 @@ object DeviceEngagement {
             )
         )
         return CborEncoder.encode(engagement)
+    }
+
+    /** Extracts the mdoc's ephemeral public key (EDeviceKey) from a QR `DeviceEngagement` — the reader side. */
+    fun parseEDeviceKey(engagement: ByteArray): EcPublicKey {
+        val map = CborDecoder.decode(engagement) as? Cbor.CborMap ?: throw ProximityException("DeviceEngagement must be a map")
+        val security = map.entries.firstOrNull { (k, _) -> (k as? Cbor.UInt)?.value == 1uL }?.second as? Cbor.Array
+            ?: throw ProximityException("missing Security")
+        val eDeviceKeyBytes = security.items.getOrNull(1) as? Cbor.Tagged ?: throw ProximityException("missing EDeviceKeyBytes")
+        val coseKey = CborDecoder.decode((eDeviceKeyBytes.value as Cbor.Bytes).value) as? Cbor.CborMap
+            ?: throw ProximityException("EDeviceKey not a COSE_Key")
+        return CoseKey.decode(coseKey)
     }
 }
