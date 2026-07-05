@@ -9,6 +9,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Row
@@ -56,6 +57,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hopae.eudi.demo.DemoWallet
@@ -311,17 +313,29 @@ private fun CredentialCard(c: Credential, onCopy: () -> Unit, onDelete: () -> Un
     var menu by remember { mutableStateOf(false) }
     Box {
         Card(
-            Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            Modifier.fillMaxWidth().padding(vertical = 6.dp)
                 .combinedClickable(onClick = {}, onLongClick = { menu = true }),
         ) {
-            Column(Modifier.padding(12.dp)) {
-                Text(typeLabel(c), style = MaterialTheme.typography.titleMedium)
-                c.issuer?.displayName?.let { Text("Issuer: $it", style = MaterialTheme.typography.bodySmall) }
-                when (val lc = c.lifecycle) {
-                    is Lifecycle.Issued -> lc.claims.take(10).forEach {
-                        Text("${it.path.joinToString(".")}: ${it.value.display()}", style = MaterialTheme.typography.bodySmall)
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(credentialTitle(c), style = MaterialTheme.typography.titleMedium)
+                        c.issuer?.displayName?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
-                    else -> Text(lc::class.simpleName ?: "", style = MaterialTheme.typography.bodySmall)
+                    FormatChip(c.format)
+                }
+                (c.lifecycle as? Lifecycle.Issued)?.let { lc ->
+                    Spacer(Modifier.height(10.dp))
+                    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            lc.claims.take(14).forEach { ClaimRow(it.path.joinToString(" › "), it.value.display()) }
+                            if (lc.claims.size > 14) {
+                                Text("+${lc.claims.size - 14} more", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -332,9 +346,62 @@ private fun CredentialCard(c: Credential, onCopy: () -> Unit, onDelete: () -> Un
     }
 }
 
+private fun credentialTitle(c: Credential): String = when (val f = c.format) {
+    is CredentialFormat.SdJwtVc -> f.vct
+    is CredentialFormat.MsoMdoc -> f.docType
+}
+
 private fun typeLabel(c: Credential): String = when (val f = c.format) {
     is CredentialFormat.SdJwtVc -> "SD-JWT VC · ${f.vct}"
     is CredentialFormat.MsoMdoc -> "mdoc · ${f.docType}"
+}
+
+@Composable
+private fun FormatChip(format: CredentialFormat) {
+    val label = when (format) {
+        is CredentialFormat.SdJwtVc -> "SD-JWT VC"
+        is CredentialFormat.MsoMdoc -> "mdoc"
+    }
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
+    }
+}
+
+@Composable
+private fun ClaimRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1.2f))
+    }
+}
+
+@Composable
+private fun InfoBox(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp)) {
+            Text(title.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(6.dp))
+            content()
+        }
+    }
+}
+
+@Composable
+private fun TrustBadge(trusted: Boolean) {
+    val bg = if (trusted) Color(0xFF2E7D32) else Color(0xFFC62828)
+    Surface(color = bg, shape = MaterialTheme.shapes.small) {
+        Text(
+            if (trusted) "✓ Verified" else "⚠ Not verified",
+            color = Color.White,
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+        )
+    }
 }
 
 private fun credentialText(c: Credential): String = buildString {
@@ -403,22 +470,26 @@ private fun OfferConfirmDialog(offer: CredentialOffer, onConfirm: () -> Unit, on
         onDismissRequest = onCancel,
         title = { Text("Receive credential?") },
         text = {
-            Column {
-                Text("Issuer", style = MaterialTheme.typography.labelMedium)
-                Text(offer.credentialIssuer, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(8.dp))
-                Text(if (offer.credentialConfigurationIds.size > 1) "Credentials" else "Credential", style = MaterialTheme.typography.labelMedium)
-                offer.credentialConfigurationIds.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
-                if (offer.requiresTxCode) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("A transaction code (PIN) will be requested.", style = MaterialTheme.typography.bodySmall)
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                InfoBox("Issuer") {
+                    Text(hostOf(offer.credentialIssuer), style = MaterialTheme.typography.titleMedium)
+                    Text(offer.credentialIssuer, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                InfoBox(if (offer.credentialConfigurationIds.size > 1) "Credentials" else "Credential") {
+                    offer.credentialConfigurationIds.forEach { Text("• $it", style = MaterialTheme.typography.bodyMedium) }
+                    if (offer.requiresTxCode) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Requires a transaction code (PIN)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onConfirm) { Text("OK") } },
+        confirmButton = { Button(onClick = onConfirm) { Text("OK") } },
         dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
     )
 }
+
+private fun hostOf(url: String): String = runCatching { java.net.URI(url).host ?: url }.getOrDefault(url)
 
 @Composable
 private fun TxCodeDialog(onSubmit: (String) -> Unit, onDismiss: () -> Unit) {
@@ -440,24 +511,35 @@ private fun ConsentDialog(request: PresentationRequest, onApprove: () -> Unit, o
         onDismissRequest = onDecline,
         title = { Text("Present to verifier?") },
         text = {
-            Column {
-                Text(request.verifier.commonName ?: request.verifier.clientId, style = MaterialTheme.typography.titleMedium)
-                Text(if (request.verifier.trusted) "✅ trusted" else "⚠️ not verified", style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(8.dp))
-                Text("Will share", style = MaterialTheme.typography.labelMedium)
-                request.queries.forEach { q ->
-                    val cand = q.candidates.firstOrNull()
-                    if (cand == null) {
-                        Text("• ${q.queryId}: no matching credential", style = MaterialTheme.typography.bodySmall)
-                    } else {
-                        Text("• ${q.queryId}${if (q.required) "" else " (optional)"} → ${cand.credentialId.value}", style = MaterialTheme.typography.bodySmall)
-                        Text("   claims: ${cand.disclosedPaths.joinToString(", ") { it.joinToString(".") }}", style = MaterialTheme.typography.bodySmall)
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                InfoBox("Verifier") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(request.verifier.commonName ?: request.verifier.clientId, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        Spacer(Modifier.width(8.dp))
+                        TrustBadge(request.verifier.trusted)
+                    }
+                    if (request.verifier.commonName != null) {
+                        Text(request.verifier.clientId, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                if (!request.satisfiable) Text("No matching credential.", style = MaterialTheme.typography.bodySmall)
+                InfoBox("Will share") {
+                    request.queries.forEach { q ->
+                        val cand = q.candidates.firstOrNull()
+                        if (cand == null) {
+                            Text("${q.queryId}: no matching credential", style = MaterialTheme.typography.bodySmall, color = Color(0xFFC62828))
+                        } else {
+                            Text("${q.queryId}${if (q.required) "" else " (optional)"}", style = MaterialTheme.typography.labelMedium)
+                            cand.disclosedPaths.forEach { Text("• ${it.joinToString(" › ")}", style = MaterialTheme.typography.bodyMedium) }
+                        }
+                    }
+                    if (!request.satisfiable) {
+                        Spacer(Modifier.height(4.dp))
+                        Text("No matching credential.", style = MaterialTheme.typography.bodySmall, color = Color(0xFFC62828))
+                    }
+                }
             }
         },
-        confirmButton = { TextButton(onClick = onApprove, enabled = request.satisfiable) { Text("Present") } },
+        confirmButton = { Button(onClick = onApprove, enabled = request.satisfiable) { Text("Present") } },
         dismissButton = { TextButton(onClick = onDecline) { Text("Decline") } },
     )
 }
