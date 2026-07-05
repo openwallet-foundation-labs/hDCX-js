@@ -47,7 +47,7 @@ class IssuanceRequest private constructor(
 /** Terminal issuance outcome (credentials stored; ids for follow-up). */
 data class IssuanceResult(val issued: List<CredentialId>)
 
-/** Issuance session state (API-CONTRACT.md §6.1). auth-code/tx-code interruptions arrive in later slices. */
+/** Issuance session state. auth-code/tx-code interruptions arrive in later slices. */
 sealed interface IssuanceState {
     data object Preparing : IssuanceState
     data class AuthorizationRequired(val authorizationUrl: String) : IssuanceState

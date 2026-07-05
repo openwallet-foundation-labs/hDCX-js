@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * A single issuance run driven as a state machine (API-CONTRACT.md §6.1). One-shot; the flow runs in
+ * A single issuance run driven as a state machine. One-shot; the flow runs in
  * the wallet scope and pauses at browser-authorization / tx-code interruptions until the app resumes.
  */
 class IssuanceSession internal constructor(

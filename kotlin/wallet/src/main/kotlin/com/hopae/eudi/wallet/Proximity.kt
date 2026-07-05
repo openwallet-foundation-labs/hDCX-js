@@ -44,7 +44,7 @@ class ProximitySelection(val chosen: Map<String, CredentialId>) {
     }
 }
 
-/** Proximity presentation session state (API-CONTRACT.md §6.3). */
+/** Proximity presentation session state. */
 sealed interface ProximityState {
     data object GeneratingEngagement : ProximityState
 

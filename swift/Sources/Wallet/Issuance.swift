@@ -41,7 +41,7 @@ public struct IssuanceRequest {
 /// Terminal issuance outcome (credentials stored; ids for follow-up).
 public struct IssuanceResult { public let issued: [CredentialId] }
 
-/// Issuance session state (API-CONTRACT.md §6.1).
+/// Issuance session state.
 public enum IssuanceState {
     case preparing
     case authorizationRequired(String)

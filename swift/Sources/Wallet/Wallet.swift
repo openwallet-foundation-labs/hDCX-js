@@ -8,7 +8,7 @@ import TransactionLog
 import Trust
 import WalletAPI
 
-/// The unified EUDI Wallet SDK facade (API-CONTRACT.md §5). Multi-instance; no global state.
+/// The unified EUDI Wallet SDK facade. Multi-instance; no global state.
 ///
 /// Phases A–C wire credential storage, DCQL retrieval, status, issuance, and remote presentation; proximity follows.
 public struct Wallet {

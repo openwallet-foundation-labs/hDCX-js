@@ -4,7 +4,7 @@ import com.hopae.eudi.wallet.cbor.cose.EcPublicKey
 import kotlin.time.Duration
 
 /*
- * Shared value types for the port SPI (API-CONTRACT.md §4/§7).
+ * Shared value types for the port SPI.
  * Naming is the cross-platform contract: Swift mirrors these 1:1.
  */
 
@@ -62,7 +62,7 @@ data class SecureAreaCapabilities(
     val keyAgreement: Boolean,
 )
 
-/* ---- credential model identifiers (API-CONTRACT.md §4) ---- */
+/* ---- credential model identifiers ---- */
 
 @JvmInline
 value class CredentialId(val value: String)

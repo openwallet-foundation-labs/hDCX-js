@@ -42,7 +42,7 @@ public struct ProximitySelection {
     }
 }
 
-/// Proximity presentation session state (API-CONTRACT.md §6.3).
+/// Proximity presentation session state.
 public enum ProximityState {
     case generatingEngagement
     /// Engagement is ready and the wallet is waiting for the reader — the app renders it as a QR / NFC tag.

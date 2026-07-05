@@ -1,6 +1,6 @@
 package com.hopae.eudi.wallet.spi
 
-/** Encrypted blob storage; no domain logic (API-CONTRACT.md §7). */
+/** Encrypted blob storage; no domain logic. */
 interface StorageDriver {
     suspend fun put(collection: String, key: String, value: ByteArray)
     suspend fun get(collection: String, key: String): ByteArray?

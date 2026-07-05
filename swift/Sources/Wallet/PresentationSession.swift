@@ -1,7 +1,7 @@
 import Foundation
 
 /**
- * A single presentation run driven as a state machine (API-CONTRACT.md §6.2). One-shot; the flow runs
+ * A single presentation run driven as a state machine. One-shot; the flow runs
  * in a Task and pauses at `.requestResolved` for the user's consent until respond/decline.
  */
 public final class PresentationSession: @unchecked Sendable {

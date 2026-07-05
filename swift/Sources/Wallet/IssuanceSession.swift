@@ -1,7 +1,7 @@
 import Foundation
 
 /**
- * A single issuance run driven as a state machine (API-CONTRACT.md §6.1). One-shot; the flow runs in
+ * A single issuance run driven as a state machine. One-shot; the flow runs in
  * a Task and pauses at browser-authorization / tx-code interruptions until the app resumes.
  */
 public final class IssuanceSession: @unchecked Sendable {

@@ -1,7 +1,7 @@
 import Foundation
 
 /**
- * A single ISO 18013-5 proximity presentation run (API-CONTRACT.md §6.3). One-shot; the flow runs in a
+ * A single ISO 18013-5 proximity presentation run. One-shot; the flow runs in a
  * Task, drives the device-retrieval exchange over the transport, and pauses at `.requestReceived` for consent.
  */
 public final class ProximitySession: @unchecked Sendable {

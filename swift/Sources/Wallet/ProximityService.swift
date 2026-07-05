@@ -8,7 +8,7 @@ import TransactionLog
 import Trust
 import WalletAPI
 
-/// ISO 18013-5 proximity presentation (API-CONTRACT.md §6.3). Generates device engagement, establishes the
+/// ISO 18013-5 proximity presentation. Generates device engagement, establishes the
 /// encrypted session over the app-provided `ProximityTransport`, and replies with a device-signed DeviceResponse.
 public struct ProximityService {
     let store: DefaultCredentialStore

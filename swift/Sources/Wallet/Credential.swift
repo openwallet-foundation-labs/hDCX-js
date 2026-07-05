@@ -2,7 +2,7 @@ import Foundation
 import SdJwt
 import WalletAPI
 
-/// Format-agnostic credential view (API-CONTRACT.md §4), assembled from the storage envelope.
+/// Format-agnostic credential view, assembled from the storage envelope.
 public struct Credential {
     public let id: CredentialId
     public let format: CredentialFormat

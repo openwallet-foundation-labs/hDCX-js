@@ -49,7 +49,7 @@ public struct PresentationSelection {
     }
 }
 
-/// Presentation session state (API-CONTRACT.md §6.2).
+/// Presentation session state.
 public enum PresentationState {
     case resolvingRequest
     case requestResolved(PresentationRequest)

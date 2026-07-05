@@ -5,7 +5,7 @@ import SdJwt
 import StatusList
 import WalletAPI
 
-/// Stored-credential management (API-CONTRACT.md §6.5). Reads are local; `status` hits the network.
+/// Stored-credential management. Reads are local; `status` hits the network.
 public struct CredentialsService {
     private let store: DefaultCredentialStore
     private let statusClient: StatusListClient

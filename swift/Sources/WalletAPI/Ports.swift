@@ -2,7 +2,7 @@ import CborCose
 import Foundation
 
 /*
- * Port SPI (API-CONTRACT.md §7). Platform features are injected by the host app;
+ * Port SPI. Platform features are injected by the host app;
  * core stays buildable and testable on plain Linux.
  */
 

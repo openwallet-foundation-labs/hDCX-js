@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * A single ISO 18013-5 proximity presentation run (API-CONTRACT.md §6.3). One-shot; the flow runs in
+ * A single ISO 18013-5 proximity presentation run. One-shot; the flow runs in
  * the wallet scope, drives the device-retrieval exchange over the transport, and pauses at
  * [ProximityState.RequestReceived] for the user's consent.
  */

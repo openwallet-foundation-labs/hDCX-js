@@ -31,7 +31,7 @@ import com.hopae.eudi.wallet.vci.ProofKey
 import com.hopae.eudi.wallet.vci.VciException
 import kotlinx.coroutines.CoroutineScope
 
-/** OpenID4VCI issuance (API-CONTRACT.md §6.1). Owns key creation, issuance, persistence, and follow-ups. */
+/** OpenID4VCI issuance. Owns key creation, issuance, persistence, and follow-ups. */
 class IssuanceService internal constructor(
     private val vci: Openid4VciClient,
     private val store: CredentialStore,

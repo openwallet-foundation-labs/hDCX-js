@@ -8,7 +8,7 @@ import TransactionLog
 import Trust
 import WalletAPI
 
-/// OpenID4VP remote presentation (API-CONTRACT.md §6.2). Bridges the store to the VP engine + records audit.
+/// OpenID4VP remote presentation. Bridges the store to the VP engine + records audit.
 public struct PresentationService {
     let vp: Openid4VpClient
     let store: DefaultCredentialStore

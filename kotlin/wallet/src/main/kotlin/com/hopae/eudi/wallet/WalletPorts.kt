@@ -12,7 +12,7 @@ import com.hopae.eudi.wallet.txlog.TransactionLogStore
 
 /**
  * Host-supplied adapters. The SDK owns credential/key/attestation lifecycle; the app injects thin
- * platform capabilities (see WALLET-FACADE-PLAN.md §6).
+ * platform capabilities.
  */
 class WalletPorts(
     /** At least one; the first is the default secure area. */

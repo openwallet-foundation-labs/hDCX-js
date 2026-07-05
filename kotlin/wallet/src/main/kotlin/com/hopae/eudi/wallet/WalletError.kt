@@ -1,6 +1,6 @@
 package com.hopae.eudi.wallet
 
-/** Typed wallet errors (API-CONTRACT.md §8). Spec error codes are preserved on the relevant cases. */
+/** Typed wallet errors. Spec error codes are preserved on the relevant cases. */
 sealed class WalletError(message: String, cause: Throwable? = null) : Exception(message, cause) {
 
     sealed class Issuance(message: String, cause: Throwable? = null) : WalletError(message, cause) {

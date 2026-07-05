@@ -18,7 +18,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 
 /**
- * The unified EUDI Wallet SDK facade (API-CONTRACT.md §5). Multi-instance, thread-safe; no global
+ * The unified EUDI Wallet SDK facade. Multi-instance, thread-safe; no global
  * state. [close] cancels in-flight sessions and is idempotent.
  *
  * Phases A–C wire credential storage, DCQL retrieval, status, issuance, and remote presentation; proximity follows.

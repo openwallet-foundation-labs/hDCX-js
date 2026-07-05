@@ -51,7 +51,7 @@ class PresentationSelection(val chosen: Map<String, CredentialId>) {
     }
 }
 
-/** Presentation session state (API-CONTRACT.md §6.2). */
+/** Presentation session state. */
 sealed interface PresentationState {
     data object ResolvingRequest : PresentationState
     data class RequestResolved(val request: PresentationRequest) : PresentationState

@@ -6,7 +6,7 @@ import com.hopae.eudi.wallet.spi.KeyUse
 import java.time.Instant
 
 /**
- * Format-agnostic credential view (API-CONTRACT.md §4), assembled from the storage envelope.
+ * Format-agnostic credential view, assembled from the storage envelope.
  * Issuer/display metadata is captured at issuance; claims/validity are parsed from the payload.
  */
 class Credential(

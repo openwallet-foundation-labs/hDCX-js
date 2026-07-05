@@ -1,6 +1,6 @@
 import Foundation
 
-/// Typed issuance errors (API-CONTRACT.md §8). Spec error codes are preserved on the relevant cases.
+/// Typed issuance errors. Spec error codes are preserved on the relevant cases.
 public enum IssuanceError: Error, Equatable {
     case invalidOffer(String)
     case authorizationFailed(oauthError: String?, message: String)
@@ -9,7 +9,7 @@ public enum IssuanceError: Error, Equatable {
     case unexpected(String)
 }
 
-/// Typed presentation errors (API-CONTRACT.md §8).
+/// Typed presentation errors.
 public enum PresentationError: Error, Equatable {
     case invalidRequest(String)
     case verifierNotTrusted(String)
@@ -19,7 +19,7 @@ public enum PresentationError: Error, Equatable {
     case unexpected(String)
 }
 
-/// Typed ISO 18013-5 proximity errors (API-CONTRACT.md §8).
+/// Typed ISO 18013-5 proximity errors.
 public enum ProximityError: Error, Equatable {
     case sessionFailed(String)
     case noMatchingCredential(String)

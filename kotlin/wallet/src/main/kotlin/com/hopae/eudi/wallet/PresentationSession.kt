@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * A single presentation run driven as a state machine (API-CONTRACT.md §6.2). One-shot; the flow runs
+ * A single presentation run driven as a state machine. One-shot; the flow runs
  * in the wallet scope and pauses at [PresentationState.RequestResolved] for the user's consent.
  */
 class PresentationSession internal constructor(

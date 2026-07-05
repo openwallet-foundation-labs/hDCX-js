@@ -29,7 +29,7 @@ import com.hopae.eudi.wallet.vp.VpException
 import kotlinx.coroutines.CoroutineScope
 import com.hopae.eudi.wallet.vp.PresentationSelection as VpSelection
 
-/** OpenID4VP remote presentation (API-CONTRACT.md §6.2). Bridges the store to the VP engine + records audit. */
+/** OpenID4VP remote presentation. Bridges the store to the VP engine + records audit. */
 class PresentationService internal constructor(
     private val vp: Openid4VpClient,
     private val store: CredentialStore,

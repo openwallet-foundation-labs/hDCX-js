@@ -6,7 +6,7 @@ import OpenID4VCI
 import SdJwt
 import WalletAPI
 
-/// OpenID4VCI issuance (API-CONTRACT.md §6.1). Owns key creation, issuance, persistence, and follow-ups.
+/// OpenID4VCI issuance. Owns key creation, issuance, persistence, and follow-ups.
 public struct IssuanceService {
     let vci: Openid4VciClient
     let store: DefaultCredentialStore

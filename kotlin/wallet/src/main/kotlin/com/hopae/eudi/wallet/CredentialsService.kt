@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import com.hopae.eudi.wallet.status.CredentialStatus as StatusListStatus
 
-/** Stored-credential management (API-CONTRACT.md §6.5). Reads are local; `status` hits the network. */
+/** Stored-credential management. Reads are local; `status` hits the network. */
 class CredentialsService internal constructor(
     private val store: CredentialStore,
     private val statusClient: StatusListClient,

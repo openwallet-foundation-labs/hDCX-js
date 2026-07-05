@@ -3,7 +3,7 @@ package com.hopae.eudi.wallet.spi
 import com.hopae.eudi.wallet.cbor.cose.EcPublicKey
 
 /**
- * Private-key custody port (API-CONTRACT.md §7).
+ * Private-key custody port.
  *
  * Crypto boundary rule: every operation that touches a private key goes through this port.
  * Public-key verification, hashing and encoding stay in core and run anywhere (incl. Linux CI).

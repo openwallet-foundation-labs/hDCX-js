@@ -2,7 +2,7 @@ import TransactionLog
 import WalletAPI
 
 /// Host-supplied adapters. The SDK owns credential/key/attestation lifecycle; the app injects thin
-/// platform capabilities (see WALLET-FACADE-PLAN.md §6).
+/// platform capabilities.
 public struct WalletPorts {
     /// At least one; the first is the default secure area.
     public let secureAreas: [any SecureArea]

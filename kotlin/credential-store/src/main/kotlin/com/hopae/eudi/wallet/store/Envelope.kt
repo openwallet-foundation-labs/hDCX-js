@@ -9,7 +9,7 @@ import java.time.Instant
 /*
  * Storage envelope: the format-agnostic persistence layer (M1).
  * Claims/validity parsing belongs to the format modules (M2+) — here payloads are opaque.
- * Public Credential facade model (API-CONTRACT.md §4) is assembled on top of this in M2.
+ * Public Credential facade model is assembled on top of this in M2.
  */
 
 /** One issued credential instance: payload bound to a device key (HAIP batch → N instances). */

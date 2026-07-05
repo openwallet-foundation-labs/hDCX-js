@@ -2,7 +2,7 @@ import CborCose
 import Foundation
 
 /*
- * Shared value types for the port SPI (API-CONTRACT.md §4/§7).
+ * Shared value types for the port SPI.
  * Naming is the cross-platform contract: Kotlin mirrors these 1:1.
  */
 
@@ -132,7 +132,7 @@ public struct SecureAreaCapabilities: Sendable {
     }
 }
 
-/* ---- credential model identifiers (API-CONTRACT.md §4) ---- */
+/* ---- credential model identifiers ---- */
 
 public struct CredentialId: Hashable, Sendable {
     public let value: String
