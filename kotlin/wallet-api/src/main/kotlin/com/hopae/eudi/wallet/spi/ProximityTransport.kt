@@ -13,4 +13,10 @@ interface ProximityTransport {
 
     /** Tears down the transport; idempotent. */
     suspend fun close()
+
+    /**
+     * ISO 18013-5 `DeviceRetrievalMethod` entries (CBOR-encoded) this transport advertises, embedded into the QR
+     * `DeviceEngagement` so the reader knows how to connect (e.g. the BLE service UUID). Empty = engagement carries none.
+     */
+    fun retrievalMethods(): List<ByteArray> = emptyList()
 }

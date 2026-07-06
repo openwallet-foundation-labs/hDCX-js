@@ -7,6 +7,7 @@ import com.hopae.eudi.wallet.trust.TrustAnchors
 import com.hopae.eudi.wallet.trust.X509ChainValidator
 import com.hopae.eudi.wallet.trust.X509RequestVerifier
 import com.hopae.eudi.wallet.trust.X5cIssuerKeyResolver
+import com.hopae.eudi.wallet.trust.X5cMdocIssuerTrust
 import com.hopae.eudi.wallet.trust.X5cMdocReaderTrust
 import com.hopae.eudi.wallet.sdjwt.Base64Url
 import com.hopae.eudi.wallet.txlog.TransactionLog
@@ -28,6 +29,8 @@ class Wallet private constructor(
     val issuance: IssuanceService,
     val presentation: PresentationService,
     val proximity: ProximityService,
+    /** The reader/verifier side of ISO 18013-5 proximity (request + verify documents from another wallet). */
+    val reader: ProximityReaderService,
     /** Audit history of presentations/issuances (ARF/GDPR) — query with [TransactionLog.history]/[TransactionLog.query]. */
     val transactions: TransactionLog,
     private val scope: CoroutineScope,
@@ -73,12 +76,15 @@ class Wallet private constructor(
             val recordFailures = config.transactionLog.recordFailures
             val presentation = PresentationService(vp, store, txlog, ports.secureAreas, scope, recordFailures)
             val proximity = ProximityService(store, txlog, ports.secureAreas, scope, readerValidator?.let { X5cMdocReaderTrust(it) }, recordFailures)
+            // Reader side: verify presented mdocs against the same issuer anchors used for status/issuance.
+            val reader = ProximityReaderService(X5cMdocIssuerTrust(issuerValidator))
 
             return Wallet(
                 credentials = CredentialsService(store, statusClient),
                 issuance = issuance,
                 presentation = presentation,
                 proximity = proximity,
+                reader = reader,
                 transactions = txlog,
                 scope = scope,
             )

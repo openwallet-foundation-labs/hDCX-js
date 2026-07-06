@@ -53,7 +53,7 @@ class ProximityService internal constructor(
         val session = ProximitySession(scope) {
             emit(ProximityState.GeneratingEngagement)
             val eDevice = EphemeralKeyPair.generate()
-            val engagement = DeviceEngagement.qr(eDevice.publicKey)
+            val engagement = DeviceEngagement.qr(eDevice.publicKey, transport.retrievalMethods())
             // EngagementReady stays the current state while blocked on receive() — the reader-waiting state.
             emit(ProximityState.EngagementReady(engagement))
             val establishment = catchingProximity { SessionMessages.decodeEstablishment(transport.receive()) }
