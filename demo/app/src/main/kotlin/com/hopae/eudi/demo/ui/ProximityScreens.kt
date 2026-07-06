@@ -209,7 +209,7 @@ private fun ProximityConsent(req: ProximityRequest, onShare: () -> Unit, onDecli
 fun ProximityReaderScreen(wallet: Wallet) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var status by remember { mutableStateOf("Tap Scan to read a nearby wallet over BLE.") }
+    var status by remember { mutableStateOf("Scan a wallet's QR or tap it over NFC to read its mdoc.") }
     var results by remember { mutableStateOf<List<VerifiedDocument>>(emptyList()) }
     var granted by remember { mutableStateOf(BLE_PERMISSIONS.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) }
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r -> granted = r.values.all { it } }

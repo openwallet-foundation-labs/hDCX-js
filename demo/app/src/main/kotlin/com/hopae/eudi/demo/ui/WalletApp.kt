@@ -36,7 +36,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Icon
@@ -164,20 +163,24 @@ fun WalletApp(wallet: Wallet) {
                 NavigationBarItem(selected = tab == 1, onClick = { tab = 1 },
                     icon = { Icon(Icons.Filled.Sensors, null) }, label = { Text("Reader") })
                 NavigationBarItem(selected = tab == 2, onClick = { tab = 2; refreshKey++ },
-                    icon = { Icon(Icons.Filled.ReceiptLong, null) }, label = { Text("Transaction Log") })
+                    icon = { Icon(Icons.Filled.ReceiptLong, null) }, label = { Text("Transactions", maxLines = 1) })
                 NavigationBarItem(selected = tab == 3, onClick = { tab = 3 },
-                    icon = { Icon(Icons.Filled.BugReport, null) }, label = { Text("Debug Log") })
+                    icon = { Icon(Icons.Filled.BugReport, null) }, label = { Text("Debug", maxLines = 1) })
             }
         },
         floatingActionButton = {
             if (tab == 0) {
                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SmallFloatingActionButton(onClick = { showHolder = true }) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Icon(Icons.Filled.Bluetooth, "Present via BLE", Modifier.size(18.dp))
-                            Icon(Icons.Filled.Nfc, "Present via NFC", Modifier.size(18.dp))
-                        }
-                    }
+                    ExtendedFloatingActionButton(
+                        onClick = { showHolder = true },
+                        icon = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(Icons.Filled.Bluetooth, null, Modifier.size(20.dp))
+                                Icon(Icons.Filled.Nfc, null, Modifier.size(20.dp))
+                            }
+                        },
+                        text = { Text("Present") },
+                    )
                     ExtendedFloatingActionButton(
                         onClick = {
                             scanLauncher.launch(ScanOptions().apply {
