@@ -177,6 +177,7 @@ class Openid4VpClient(
                             origin = request.origin,
                             verifierEncryptionKey = encryptionKey?.publicKey,
                             deviceAuthAlgValues = deviceAuthAlgValues,
+                            requireHolderBinding = candidate.query.requireCryptographicHolderBinding,
                         )
                     )
                 )

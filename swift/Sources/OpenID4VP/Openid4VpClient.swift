@@ -158,7 +158,8 @@ public struct Openid4VpClient {
                     disclosedPaths: candidate.disclosedPaths,
                     clientId: request.clientId, nonce: request.nonce, responseUri: request.responseUri,
                     issuedAt: iat, transactionData: request.transactionData, verifierJwkThumbprint: jwkThumbprint, origin: request.origin,
-                    verifierEncryptionKey: encryptionKey?.publicKey, deviceAuthAlgValues: deviceAuthAlgValues
+                    verifierEncryptionKey: encryptionKey?.publicKey, deviceAuthAlgValues: deviceAuthAlgValues,
+                    requireHolderBinding: candidate.query.requireCryptographicHolderBinding
                 ))))
             }
             vpEntries.append((queryId, .arr(presentations)))

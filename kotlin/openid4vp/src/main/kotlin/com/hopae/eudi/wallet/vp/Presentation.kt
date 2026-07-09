@@ -26,6 +26,11 @@ class PresentationContext(
      * which `deviceSignature` / `deviceMac` algorithms it accepts. Null when the verifier did not constrain it.
      */
     val deviceAuthAlgValues: List<Long>? = null,
+    /**
+     * §6.1 `require_cryptographic_holder_binding`. When false the verifier accepts an unbound credential, so an
+     * SD-JWT VC may be presented without a KB-JWT. Default true (bind). mdoc always binds via DeviceAuth.
+     */
+    val requireHolderBinding: Boolean = true,
 )
 
 /**

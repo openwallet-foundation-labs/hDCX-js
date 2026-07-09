@@ -20,10 +20,14 @@ public struct PresentationContext {
     /// COSE algorithm identifiers from the verifier's `deviceauth_alg_values` (OpenID4VP §B.2.2), stating
     /// which `deviceSignature` / `deviceMac` algorithms it accepts. Nil when the verifier did not constrain it.
     public let deviceAuthAlgValues: [Int64]?
+    /// §6.1 `require_cryptographic_holder_binding`. When false the verifier accepts an unbound credential, so an
+    /// SD-JWT VC may be presented without a KB-JWT. Default true (bind). mdoc always binds via DeviceAuth.
+    public let requireHolderBinding: Bool
 
     public init(disclosedPaths: [[String]], clientId: String, nonce: String, responseUri: String?,
                 issuedAt: Int64, transactionData: [String]?, verifierJwkThumbprint: [UInt8]?, origin: String? = nil,
-                verifierEncryptionKey: EcPublicKey? = nil, deviceAuthAlgValues: [Int64]? = nil) {
+                verifierEncryptionKey: EcPublicKey? = nil, deviceAuthAlgValues: [Int64]? = nil,
+                requireHolderBinding: Bool = true) {
         self.disclosedPaths = disclosedPaths
         self.clientId = clientId
         self.nonce = nonce
@@ -34,6 +38,7 @@ public struct PresentationContext {
         self.origin = origin
         self.verifierEncryptionKey = verifierEncryptionKey
         self.deviceAuthAlgValues = deviceAuthAlgValues
+        self.requireHolderBinding = requireHolderBinding
     }
 }
 

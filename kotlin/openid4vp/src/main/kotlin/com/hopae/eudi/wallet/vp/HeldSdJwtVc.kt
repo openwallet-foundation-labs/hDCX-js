@@ -20,11 +20,18 @@ class HeldSdJwtVc(
     override val docType: String? = null
 
     /**
-     * Builds a presentation: selects the disclosed disclosures and appends a KB-JWT bound to
-     * the verifier client_id + nonce, optionally with transaction-data hashes.
+     * Builds a presentation: selects the disclosed disclosures and, unless the verifier waived it, appends a
+     * KB-JWT bound to the verifier client_id + nonce (optionally with transaction-data hashes).
+     *
+     * §6.1 `require_cryptographic_holder_binding=false` lets the verifier accept an unbound credential — then
+     * no KB-JWT is produced, which also drops replay protection (the presentation is not tied to this verifier
+     * or nonce). Transaction data can only be conveyed inside the KB-JWT, so its presence forces binding.
      */
     override suspend fun present(ctx: PresentationContext): String {
         val pathSet = ctx.disclosedPaths.toSet()
+        if (!ctx.requireHolderBinding && ctx.transactionData.isNullOrEmpty()) {
+            return SdJwtHolder.present(sdJwt, select = { it in pathSet }).serialize()
+        }
         val extra = buildList {
             if (!ctx.transactionData.isNullOrEmpty()) {
                 add("transaction_data_hashes" to JsonValue.Arr(ctx.transactionData.map { JsonValue.Str(sha256B64(it)) }))

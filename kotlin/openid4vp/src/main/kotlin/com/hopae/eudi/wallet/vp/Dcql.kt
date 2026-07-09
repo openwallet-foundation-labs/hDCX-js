@@ -35,6 +35,11 @@ data class CredentialQuery(
     val claimSets: List<List<String>>?,
     /** §6.1: whether more than one Credential may be returned for this query. Default false (exactly one). */
     val multiple: Boolean = false,
+    /**
+     * §6.1: whether the Verifier requires a Cryptographic Holder Binding proof. Default true. When false the
+     * Verifier accepts a Credential without holder binding, so an SD-JWT VC may be presented with no KB-JWT.
+     */
+    val requireCryptographicHolderBinding: Boolean = true,
 )
 
 data class CredentialSetQuery(
@@ -81,7 +86,8 @@ data class DcqlQuery(
                 }
             }
             val multiple = (o["multiple"] as? JsonValue.Bool)?.value ?: false
-            return CredentialQuery(id, format, meta, claims, claimSets, multiple)
+            val requireBinding = (o["require_cryptographic_holder_binding"] as? JsonValue.Bool)?.value ?: true
+            return CredentialQuery(id, format, meta, claims, claimSets, multiple, requireBinding)
         }
 
         private fun parseClaimQuery(o: JsonValue.Obj): ClaimQuery {

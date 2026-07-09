@@ -32,6 +32,9 @@ public struct CredentialQuery {
     public let claimSets: [[String]]?
     /// §6.1: whether more than one Credential may be returned for this query. Default false (exactly one).
     public var multiple: Bool = false
+    /// §6.1: whether the Verifier requires a Cryptographic Holder Binding proof. Default true. When false the
+    /// Verifier accepts a Credential without holder binding, so an SD-JWT VC may be presented with no KB-JWT.
+    public var requireCryptographicHolderBinding: Bool = true
 }
 
 public struct CredentialSetQuery {
@@ -91,7 +94,10 @@ public struct DcqlQuery {
         }
         var multiple = false
         if case let .bool(m)? = o["multiple"] { multiple = m }
-        return CredentialQuery(id: id, format: format, meta: meta, claims: claims, claimSets: claimSets, multiple: multiple)
+        var requireBinding = true
+        if case let .bool(b)? = o["require_cryptographic_holder_binding"] { requireBinding = b }
+        return CredentialQuery(id: id, format: format, meta: meta, claims: claims, claimSets: claimSets,
+                               multiple: multiple, requireCryptographicHolderBinding: requireBinding)
     }
 
     private static func parseClaimQuery(_ o: JsonValue) throws -> ClaimQuery {
