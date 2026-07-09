@@ -68,7 +68,7 @@ Verified against the tree at `b82baeb`. The core is complete for `org-iso-mdoc` 
 
 Our wire format matches `av-lib-ios-w3c-dc-api` v0.20.1 exactly — same handover, same `info =
 CBOR(SessionTranscript)`, same empty `aad`, same `["dcapi", {enc, cipherText}]` envelope, same
-`CipherSuite(kem: .P256, kdf: .KDF256, aead: .AESGCM128)`. See `../eudi-ref/ios-dc-api.md` for the
+`CipherSuite(kem: .P256, kdf: .KDF256, aead: .AESGCM128)`. See `IOS-DC-API-REFERENCE.md` for the
 reference teardown.
 
 ## What is missing
@@ -144,6 +144,65 @@ Our dev machine is Linux, so none of this compiles or runs here.
 - an Apple Developer account, including an **approved** special entitlement for
   `com.apple.developer.identity-document-services.document-provider.mobile-document-types`, with every
   servable doctype listed. Approval takes lead time — request it when the machine is set up.
+
+#### Apple Developer setup (done 2026-07-09)
+
+The portal side is configured. Signing uses the team's shared Account Holder Apple ID, added only to
+**Xcode → Settings → Accounts** — the Mac's iCloud login and the iPhone's Apple ID are irrelevant to
+code signing.
+
+| | Value |
+| --- | --- |
+| Team | Hopae Inc., Organization |
+| Team ID (`$(AppIdentifierPrefix)`) | `P3A48743C4` |
+| App ID (app) | `com.hopae.eudi.wallet.demo` |
+| App ID (extension) | `com.hopae.eudi.wallet.demo.idprovider` |
+| App Group | `group.com.hopae.eudi.wallet.demo` |
+| Keychain access group | `P3A48743C4.com.hopae.eudi.wallet.demo` |
+
+An extension's bundle ID must be prefixed by its host app's. The App Group is enabled on **both** App
+IDs; the keychain group is an Xcode capability only and has no portal entry.
+
+**Capability split**, mirroring the reference: the app gets App Groups + *Digital Credentials API -
+Mobile Document Provider*; the extension gets App Groups only. The doctype entitlement belongs on the
+app because the app is what calls `IdentityDocumentProviderRegistrationStore`. Do **not** enable *ID
+Verifier - Display Only* — that is `ProximityReader` (tapping an Apple Wallet ID with an iPhone),
+unrelated to our ISO 18013-5 BLE reader, and it drags in a business review.
+
+*Digital Credentials API* is the only managed (approval-gated) capability here. Ticking it saved
+without a request prompt, which suggests the team already has it — **unconfirmed until a build proves
+it.** First thing on the Mac:
+
+```bash
+codesign -d --entitlements :- "/path/to/EUDI Wallet Demo.app"
+```
+
+Expect `com.apple.developer.identity-document-services.document-provider.mobile-document-types` with a
+non-empty array. The portal capability only *permits* the key; the doctypes must be written into the
+app's `.entitlements` by hand, and a doctype absent from that array cannot be registered or served:
+
+```xml
+<key>com.apple.developer.identity-document-services.document-provider.mobile-document-types</key>
+<array>
+  <string>eu.europa.ec.eudi.pid.1</string>
+  <string>org.iso.18013.5.1.mDL</string>
+</array>
+```
+
+Entitlements are enforced at runtime, not only at distribution — without this one the extension
+installs but never registers, so Safari never offers the wallet. **P0 does not need it** (App Groups +
+Keychain Sharing suffice), so adapter work is not gated on approval.
+
+Test device: iPhone on iOS 26.5.2, Developer Mode on. Xcode registers the UDID automatically; the team
+allows 100 devices per type per membership year, counter resetting 2027-05-25.
+
+BLE, camera, and NFC are **not** portal capabilities. Proximity needs
+`NSBluetoothAlwaysUsageDescription` in Info.plist plus the `bluetooth-peripheral` background mode (we
+run peripheral server mode). ISO 18013-5 NFC engagement would require HCE — region-restricted, out of
+scope.
+
+Finally: **never create keys under a Personal Team.** `kSecAttrAccessGroup` is fixed at key creation
+and Secure Enclave keys cannot be exported, so a wrong team means re-issuing every credential.
 
 #### Scope note
 
