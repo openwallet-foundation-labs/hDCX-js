@@ -62,7 +62,7 @@ let package = Package(
         .target(
             name: "Trust",
             dependencies: [
-                "OpenID4VP", "SdJwt", "CborCose", "MDoc",
+                "OpenID4VCI", "OpenID4VP", "SdJwt", "CborCose", "MDoc",
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "X509", package: "swift-certificates"),
             ]

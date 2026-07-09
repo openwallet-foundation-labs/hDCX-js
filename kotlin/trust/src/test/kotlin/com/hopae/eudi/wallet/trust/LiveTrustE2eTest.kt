@@ -48,9 +48,48 @@ import kotlin.test.assertTrue
  */
 class LiveTrustE2eTest {
 
-    private fun anchor(): TrustAnchors {
-        val der = javaClass.getResourceAsStream("/pid_issuer_ca_ut_02.der")!!.readBytes()
+    private fun anchor(): TrustAnchors = anchor("/pid_issuer_ca_ut_02.der")
+
+    private fun anchor(resource: String): TrustAnchors {
+        val der = javaClass.getResourceAsStream(resource)!!.readBytes()
         return TrustAnchors(listOf(X509Support.parse(der)))
+    }
+
+    /**
+     * Live proof of OpenID4VCI §12.2.2/§12.2.3 signed metadata: `dev.issuer-backend.eudiw.dev` serves the
+     * whole metadata document as an `application/jwt` JWS (`typ=openidvci-issuer-metadata+jwt`) whose x5c
+     * leaf chains to `PID Issuer CA 02` (EU). `RequireSigned` must negotiate it, verify the chain, and
+     * enforce `sub` / `iat`. (`issuer.eudiw.dev` does not sign — it only serves `application/json`.)
+     */
+    @Test
+    fun verifySignedIssuerMetadata() = runBlocking {
+        assumeTrue(System.getenv("EUDI_SIGNED_METADATA") == "1", "set EUDI_SIGNED_METADATA=1 for the live signed-metadata check")
+        val issuer = "https://dev.issuer-backend.eudiw.dev"
+        val validator = X509ChainValidator(anchor("/pid_issuer_ca_eu_02.der"))
+        val client = com.hopae.eudi.wallet.vci.Openid4VciClient(
+            JdkHttp(), { size -> ByteArray(size) }, clock = { Instant.now().epochSecond },
+            metadataPolicy = com.hopae.eudi.wallet.vci.IssuerMetadataPolicy.RequireSigned(X5cSignedMetadataVerifier(validator)),
+        )
+
+        val meta = client.loadIssuerMetadata(issuer)
+        println("\n*** LIVE SIGNED ISSUER METADATA VERIFIED (x5c -> PID Issuer CA 02 EU) ***")
+        println("credential_issuer: ${meta.credentialIssuer}")
+        println("credential_endpoint: ${meta.credentialEndpoint}")
+        println("configurations: ${meta.credentialConfigurationsSupported.size}")
+        assertEquals(issuer, meta.credentialIssuer)
+        assertTrue(meta.credentialConfigurationsSupported.isNotEmpty(), "signed metadata carries the configurations")
+    }
+
+    /** The same issuer must still serve unsigned JSON — and `IgnoreSigned` must take that branch. */
+    @Test
+    fun unsignedMetadataStillWorks() = runBlocking {
+        assumeTrue(System.getenv("EUDI_SIGNED_METADATA") == "1", "set EUDI_SIGNED_METADATA=1 for the live signed-metadata check")
+        val issuer = "https://dev.issuer-backend.eudiw.dev"
+        val client = com.hopae.eudi.wallet.vci.Openid4VciClient(JdkHttp(), { size -> ByteArray(size) }, clock = { Instant.now().epochSecond })
+
+        val meta = client.loadIssuerMetadata(issuer)
+        assertEquals(issuer, meta.credentialIssuer)
+        println("*** unsigned application/json branch OK — ${meta.credentialConfigurationsSupported.size} configurations ***")
     }
 
     /** Validation instant: EUDI_AT (epoch seconds) overrides now — used to prove logic vs a lapsed issuer cert. */

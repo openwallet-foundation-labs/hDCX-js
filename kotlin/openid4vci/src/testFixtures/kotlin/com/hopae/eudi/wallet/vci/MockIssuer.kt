@@ -51,7 +51,7 @@ class MockIssuer(
     override suspend fun execute(request: HttpRequest): HttpResponse {
         val path = request.url.removePrefix(issuer)
         return when {
-            path == "/.well-known/openid-credential-issuer" -> ok(issuerMetadata())
+            path == "/.well-known/openid-credential-issuer" -> handleIssuerMetadata(request)
             path == "/.well-known/oauth-authorization-server" -> ok(asMetadata())
             path == "/.well-known/jwt-vc-issuer" -> ok(jwtVcIssuerMetadata())
             path == "/token" -> handleToken(request)
@@ -132,8 +132,27 @@ class MockIssuer(
 
     private var issuedRefreshToken: String? = null
 
-    /** When set, the issuer metadata carries this `signed_metadata` JWT. */
+    /** When set, the issuer serves this JWT (as `application/jwt`) to wallets whose Accept allows it. */
     var signedMetadata: String? = null
+
+    /** The `Accept` the wallet sent on the last metadata GET — lets tests assert §12.2.2 negotiation. */
+    var lastMetadataAccept: String? = null
+        private set
+
+    /**
+     * Content-negotiated metadata (OpenID4VCI §12.2.2): a signed JWT when the wallet accepts
+     * `application/jwt` and this issuer signs; otherwise the unsigned JSON document.
+     */
+    private fun handleIssuerMetadata(request: HttpRequest): HttpResponse {
+        val accept = request.headers.firstOrNull { it.first.equals("Accept", ignoreCase = true) }?.second ?: "application/json"
+        lastMetadataAccept = accept
+        val jwt = signedMetadata
+        return if (jwt != null && accept.contains("application/jwt")) {
+            HttpResponse(200, listOf("Content-Type" to "application/jwt"), jwt.encodeToByteArray())
+        } else {
+            ok(issuerMetadata())
+        }
+    }
 
     private fun handleNonce(): HttpResponse = ok("""{"c_nonce":"${cNonce ?: "c-nonce-xyz"}"}""")
 
@@ -247,7 +266,6 @@ class MockIssuer(
 
     private fun issuerMetadata(): String = """
         {"credential_issuer":"$issuer",
-         ${signedMetadata?.let { "\"signed_metadata\":\"$it\"," } ?: ""}
          "credential_endpoint":"$issuer/credential",
          "nonce_endpoint":"$issuer/nonce",
          "deferred_credential_endpoint":"$issuer/deferred_credential",

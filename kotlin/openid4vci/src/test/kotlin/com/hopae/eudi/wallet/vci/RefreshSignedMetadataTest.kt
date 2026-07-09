@@ -1,5 +1,6 @@
 package com.hopae.eudi.wallet.vci
 
+import com.hopae.eudi.wallet.sdjwt.Base64Url
 import com.hopae.eudi.wallet.sdjwt.JsonValue
 import com.hopae.eudi.wallet.sdjwt.Jws
 import com.hopae.eudi.wallet.sdjwt.SecureAreaJwsSigner
@@ -14,10 +15,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-/** Minor HAIP gaps: refresh-token reissuance (RFC 6749 §6) and signed issuer metadata (§11.2.3). */
+/**
+ * Minor HAIP gaps: refresh-token reissuance (RFC 6749 §6) and signed issuer metadata
+ * (OpenID4VCI §12.2.2 content negotiation + §12.2.3 signed-metadata rules).
+ */
 class RefreshSignedMetadataTest {
 
     private val now = 1_700_000_000L
+    private val issuer = "https://issuer.example"
     private fun rng() = Rng { size -> ByteArray(size) { (it + 1).toByte() } }
 
     private suspend fun keys(area: SoftwareSecureArea): IssuanceKeys {
@@ -47,33 +52,91 @@ class RefreshSignedMetadataTest {
         assertTrue(renewed.canReissue, "renewed response carries a fresh refresh token")
     }
 
-    /** Verifier: checks the signed_metadata JWS against the issuer key, returns its claims. */
-    private fun verifier(area: SoftwareSecureArea, issuerKey: KeyInfo) = SignedMetadataVerifier { jws ->
+    /** Verifier: proves the JWS signature against the issuer key and returns its claims (trust is the adapter's job). */
+    private fun verifier(issuerKey: KeyInfo) = SignedMetadataVerifier { jws ->
         val parsed = Jws.parse(jws)
-        require(parsed.verify(issuerKey.publicKey, SigningAlgorithm.ES256)) { "bad signed_metadata signature" }
+        require(parsed.verify(issuerKey.publicKey, SigningAlgorithm.ES256)) { "bad signed metadata signature" }
         JsonValue.parse(parsed.payloadBytes.decodeToString()) as JsonValue.Obj
     }
 
-    private suspend fun signMetadata(area: SoftwareSecureArea, issuerKey: KeyInfo, payload: JsonValue.Obj): String {
-        val header = JsonValue.Obj(listOf("alg" to JsonValue.Str("ES256"), "typ" to JsonValue.Str("jwt")))
-        return Jws.sign(header, payload.serialize().encodeToByteArray(), SecureAreaJwsSigner(area, issuerKey.handle, SigningAlgorithm.ES256)).compact()
+    /** A §12.2.3 payload: the metadata parameters as top-level claims, plus sub/iat (and optionally exp). */
+    private fun metadataClaims(
+        sub: String = issuer,
+        iat: Long? = now,
+        exp: Long? = null,
+        nonceEndpoint: String = "$issuer/signed-nonce",
+    ): JsonValue.Obj = JsonValue.Obj(
+        buildList {
+            add("credential_issuer" to JsonValue.Str(issuer))
+            add("credential_endpoint" to JsonValue.Str("$issuer/credential"))
+            add("nonce_endpoint" to JsonValue.Str(nonceEndpoint))
+            add("sub" to JsonValue.Str(sub))
+            iat?.let { add("iat" to JsonValue.NumInt(it)) }
+            exp?.let { add("exp" to JsonValue.NumInt(it)) }
+        }
+    )
+
+    private suspend fun signMetadata(
+        area: SoftwareSecureArea,
+        key: KeyInfo,
+        payload: JsonValue.Obj = metadataClaims(),
+        typ: String = SIGNED_METADATA_TYP,
+    ): String {
+        val header = JsonValue.Obj(listOf("alg" to JsonValue.Str("ES256"), "typ" to JsonValue.Str(typ)))
+        val signer = SecureAreaJwsSigner(area, key.handle, SigningAlgorithm.ES256)
+        return Jws.sign(header, payload.serialize().encodeToByteArray(), signer).compact()
     }
+
+    private suspend fun clientFor(
+        area: SoftwareSecureArea,
+        issuerKey: KeyInfo,
+        mock: MockIssuer,
+        require: Boolean = true,
+    ) = Openid4VciClient(
+        mock, rng(), clock = { now },
+        metadataPolicy = if (require) IssuerMetadataPolicy.RequireSigned(verifier(issuerKey))
+        else IssuerMetadataPolicy.PreferSigned(verifier(issuerKey)),
+    )
 
     @Test
     fun requireSignedUsesVerifiedMetadata() = runBlocking {
         val area = SoftwareSecureArea()
         val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
         val mock = MockIssuer(area, issuerKey, now)
-        // signed_metadata authoritatively pins the nonce endpoint
-        mock.signedMetadata = signMetadata(area, issuerKey, JsonValue.Obj(listOf(
-            "credential_issuer" to JsonValue.Str("https://issuer.example"),
-            "nonce_endpoint" to JsonValue.Str("https://issuer.example/signed-nonce"),
-        )))
-        val client = Openid4VciClient(mock, rng(), clock = { now }, metadataPolicy = IssuerMetadataPolicy.RequireSigned(verifier(area, issuerKey)))
+        mock.signedMetadata = signMetadata(area, issuerKey) // pins the nonce endpoint authoritatively
 
-        val meta = client.loadIssuerMetadata("https://issuer.example")
-        assertEquals("https://issuer.example", meta.credentialIssuer)
-        assertEquals("https://issuer.example/signed-nonce", meta.nonceEndpoint) // verified claim overrode the fetched JSON
+        val meta = clientFor(area, issuerKey, mock).loadIssuerMetadata(issuer)
+
+        assertEquals(issuer, meta.credentialIssuer)
+        assertEquals("$issuer/signed-nonce", meta.nonceEndpoint) // came from the JWT payload, not the JSON
+        assertEquals("application/jwt", mock.lastMetadataAccept) // §12.2.2: signalled signed-only
+    }
+
+    @Test
+    fun ignoreSignedAsksForJsonOnly() = runBlocking {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mock = MockIssuer(area, issuerKey, now)
+        mock.signedMetadata = signMetadata(area, issuerKey)
+
+        val meta = Openid4VciClient(mock, rng(), clock = { now }).loadIssuerMetadata(issuer)
+
+        assertEquals("application/json", mock.lastMetadataAccept)
+        assertEquals("$issuer/nonce", meta.nonceEndpoint) // the unsigned JSON, signed metadata never requested
+    }
+
+    @Test
+    fun preferSignedUsesSignedThenFallsBackToJson() = runBlocking {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+
+        val signing = MockIssuer(area, issuerKey, now)
+        signing.signedMetadata = signMetadata(area, issuerKey)
+        assertEquals("$issuer/signed-nonce", clientFor(area, issuerKey, signing, require = false).loadIssuerMetadata(issuer).nonceEndpoint)
+        assertTrue(signing.lastMetadataAccept!!.contains("application/jwt"))
+
+        val unsigned = MockIssuer(area, issuerKey, now) // does not sign — must not fail
+        assertEquals("$issuer/nonce", clientFor(area, issuerKey, unsigned, require = false).loadIssuerMetadata(issuer).nonceEndpoint)
     }
 
     @Test
@@ -81,9 +144,8 @@ class RefreshSignedMetadataTest {
         val area = SoftwareSecureArea()
         val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
         val mock = MockIssuer(area, issuerKey, now) // no signedMetadata set
-        val client = Openid4VciClient(mock, rng(), clock = { now }, metadataPolicy = IssuerMetadataPolicy.RequireSigned(verifier(area, issuerKey)))
 
-        assertFailsWith<VciException.MetadataError> { client.loadIssuerMetadata("https://issuer.example") }
+        assertFailsWith<VciException.MetadataError> { clientFor(area, issuerKey, mock).loadIssuerMetadata(issuer) }
     }
 
     @Test
@@ -92,9 +154,61 @@ class RefreshSignedMetadataTest {
         val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
         val rogue = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
         val mock = MockIssuer(area, issuerKey, now)
-        mock.signedMetadata = signMetadata(area, rogue, JsonValue.Obj(listOf("credential_issuer" to JsonValue.Str("https://issuer.example"))))
-        val client = Openid4VciClient(mock, rng(), clock = { now }, metadataPolicy = IssuerMetadataPolicy.RequireSigned(verifier(area, issuerKey)))
+        mock.signedMetadata = signMetadata(area, rogue)
 
-        assertFailsWith<IllegalArgumentException> { client.loadIssuerMetadata("https://issuer.example") }
+        assertFailsWith<IllegalArgumentException> { clientFor(area, issuerKey, mock).loadIssuerMetadata(issuer) }
+    }
+
+    @Test
+    fun rejectsWrongTyp() = runBlocking<Unit> {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mock = MockIssuer(area, issuerKey, now)
+        mock.signedMetadata = signMetadata(area, issuerKey, typ = "jwt") // §12.2.3: typ MUST be the metadata type
+
+        assertFailsWith<VciException.MetadataError> { clientFor(area, issuerKey, mock).loadIssuerMetadata(issuer) }
+    }
+
+    @Test
+    fun rejectsSymmetricAlg() = runBlocking<Unit> {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mock = MockIssuer(area, issuerKey, now)
+        // §12.2.3: alg MUST NOT be `none` or a MAC — rejected on the header, before any signature check.
+        val header = """{"alg":"HS256","typ":"$SIGNED_METADATA_TYP"}"""
+        mock.signedMetadata = "${Base64Url.encode(header.encodeToByteArray())}." +
+            "${Base64Url.encode(metadataClaims().serialize().encodeToByteArray())}.c2ln"
+
+        assertFailsWith<VciException.MetadataError> { clientFor(area, issuerKey, mock).loadIssuerMetadata(issuer) }
+    }
+
+    @Test
+    fun rejectsSubMismatch() = runBlocking<Unit> {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mock = MockIssuer(area, issuerKey, now)
+        mock.signedMetadata = signMetadata(area, issuerKey, metadataClaims(sub = "https://evil.example"))
+
+        assertFailsWith<VciException.MetadataError> { clientFor(area, issuerKey, mock).loadIssuerMetadata(issuer) }
+    }
+
+    @Test
+    fun rejectsMissingIat() = runBlocking<Unit> {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mock = MockIssuer(area, issuerKey, now)
+        mock.signedMetadata = signMetadata(area, issuerKey, metadataClaims(iat = null))
+
+        assertFailsWith<VciException.MetadataError> { clientFor(area, issuerKey, mock).loadIssuerMetadata(issuer) }
+    }
+
+    @Test
+    fun rejectsExpiredMetadata() = runBlocking<Unit> {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mock = MockIssuer(area, issuerKey, now)
+        mock.signedMetadata = signMetadata(area, issuerKey, metadataClaims(exp = now - 1))
+
+        assertFailsWith<VciException.MetadataError> { clientFor(area, issuerKey, mock).loadIssuerMetadata(issuer) }
     }
 }

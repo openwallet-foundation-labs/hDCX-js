@@ -11,6 +11,7 @@ repositories {
 }
 
 dependencies {
+    api(project(":openid4vci"))
     api(project(":openid4vp"))
     api(project(":sdjwt"))
     api(project(":mdoc"))

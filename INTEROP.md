@@ -171,6 +171,38 @@ encrypted DeviceResponse (HTTP 200)**, i.e. our DeviceSigned verifies over the h
 reconstructs. Note the two PID forms use different field names (mdoc `birth_date` +
 `nationality[…]`, SD-JWT `birthdate` + `nationalities[…]`); `DEFAULT_DATA` fills a superset.
 
+## Signed Credential Issuer Metadata (OpenID4VCI §12.2.2 / §12.2.3)
+
+`signed_metadata` — the JSON member our implementation originally looked for — **does not exist in
+OpenID4VCI 1.0 Final**; it was dropped in draft 16. The final spec carries signed metadata by content
+negotiation instead: the wallet's `Accept` signals what it supports, and the issuer answers with either
+an unsigned `application/json` document (MUST) or a signed `application/jwt` whose payload *is* the
+metadata (MAY), typed `openidvci-issuer-metadata+jwt` and carrying `sub` (= the Credential Issuer
+Identifier) and `iat`.
+
+Of the reference deployments, only **`dev.issuer-backend.eudiw.dev`** signs:
+
+| Host | `application/jwt`? |
+| --- | --- |
+| `issuer.eudiw.dev` (the issuance e2e target) | ✗ unsigned JSON only |
+| `ec.dev.issuer.eudiw.dev` | ✗ unsigned JSON only |
+| `dev.issuer-backend.eudiw.dev` | ✓ fully conformant |
+
+Its JWT is `ES256`, `typ=openidvci-issuer-metadata+jwt`, `iss = sub = credential_issuer`, freshly
+`iat`-stamped per request, with an `x5c` leaf (`CN=Kotlin Issuer Signer Dev, O=Niscy`) chaining to
+`PID Issuer CA 02` (**EU**, `certs/pid_issuer_ca_eu_02.der` — a different country CA than the UT one
+that signs PID document signers). `LiveTrustE2eTest.verifySignedIssuerMetadata` proves the whole path:
+
+```sh
+cd kotlin && EUDI_SIGNED_METADATA=1 ./gradlew :trust:test \
+  --tests '*LiveTrustE2eTest.verifySignedIssuerMetadata' --tests '*LiveTrustE2eTest.unsignedMetadataStillWorks'
+# *** LIVE SIGNED ISSUER METADATA VERIFIED (x5c -> PID Issuer CA 02 EU) ***
+```
+
+`IssuerMetadataPolicy.RequireSigned(X5cSignedMetadataVerifier(validator))` negotiates `application/jwt`,
+validates the chain, enforces the §12.2.3 rules, and takes the payload as the metadata;
+`IgnoreSigned` (the default) asks for `application/json` and never sees a JWT.
+
 ## Proximity (ISO 18013-5) — device-to-device interop with Multipaz
 
 Separate from the headless remote flows above, the proximity stack was verified **phone-to-phone**

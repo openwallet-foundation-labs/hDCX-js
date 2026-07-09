@@ -21,17 +21,17 @@ Legend: ✅ implemented · 🟡 partial · ⬜ not yet.
 | SD-JWT | RFC 9901 | ✅ issue / present / verify, KB-JWT, recursive & array disclosures, decoys; RFC disclosure vectors (73 entries) pass both languages. Gaps: KB-JWT `iat` presence-only (no §7.3 time-window check), §7.1(6) `exp`/`nbf` enforced only in the VC layer, §8 JWS JSON serialization absent (optional) |
 | SD-JWT VC | draft-ietf-oauth-sd-jwt-vc | 🟡 `SdJwtVcVerifier` — typ/iss/vct enforcement, time validation, issuer-key resolution (`.well-known/jwt-vc-issuer` + x5c), holder binding, status extraction. **Type Metadata (§4) and `vct#integrity` entirely unimplemented**; transitional `vc+sd-jwt` typ rejected |
 | ISO/IEC 18013-5 mdoc | :2021 | ✅ `mdoc` / `MDoc` — `IssuerSigned`/MSO, `DeviceResponse`, selective disclosure, device signature, reader auth (§9.1.4). `deviceMac` is **verify-only** (reader side); MSO digest SHA-256 only; `DeviceResponse` errors/status semantics not modeled |
-| X.509 PKIX | RFC 5280 | ✅ `trust` / `Trust` — chain validation (path build, validity, basic constraints), SAN, x509_san_dns / x509_hash |
+| X.509 PKIX | RFC 5280 | ✅ `trust` / `Trust` — chain validation (path build, validity, basic constraints), SAN, x509_san_dns / x509_hash; x5c adapters for SD-JWT VC issuers, mdoc issuer/reader, and signed issuer metadata |
 
 ## Issuance (OpenID4VCI)
 
 | Spec | Anchor version | Status |
 |---|---|---|
-| OpenID4VCI | 1.0 Final (2025-09-16) | ✅ `openid4vci` — pre-authorized & authorization-code (+PAR), offer resolution, scope-preferred; **live-issued a real PID from `issuer.eudiw.dev`** (see `INTEROP.md`). Gaps: credential response encryption, `attestation` proof type, `credential_identifiers`, deferred `interval` — see audit below |
+| OpenID4VCI | 1.0 Final (2025-09-16) | ✅ `openid4vci` — pre-authorized & authorization-code (+PAR), offer resolution, scope-preferred; **signed metadata** (§12.2.2 `Accept` negotiation + §12.2.3 `application/jwt` with `typ`/`alg`/`sub`/`iat`/`exp` rules); **live-issued a real PID from `issuer.eudiw.dev`** and **live-verified signed metadata from `dev.issuer-backend.eudiw.dev`** (see `INTEROP.md`). Gaps: credential response encryption, `attestation` proof type, `credential_identifiers`, deferred `interval` — see audit below |
 | PKCE | RFC 7636 (S256) | ✅ |
 | DPoP | RFC 9449 | ✅ jti/htm/htu/ath + DPoP-Nonce retry |
 | OAuth Attestation-Based Client Auth | draft (wallet attestation + PoP) | ✅ WUA client authentication during issuance |
-| HAIP | 1.0 Final | ✅ **issuance profile complete, both languages** — PAR/DPoP/PKCE required, wallet attestation, key attestation, batch, deferred, notification, refresh-token reissuance, signed metadata policy |
+| HAIP | 1.0 Final | ✅ **issuance profile complete, both languages** — PAR/DPoP/PKCE required, wallet attestation, key attestation, batch, deferred, notification, refresh-token reissuance, signed metadata policy (OpenID4VCI §12.2.2/§12.2.3) |
 
 ## Presentation (OpenID4VP & proximity)
 

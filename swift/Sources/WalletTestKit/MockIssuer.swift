@@ -55,7 +55,7 @@ public actor MockIssuer: HttpTransport {
     public func execute(_ request: HttpRequest) async throws -> HttpResponse {
         let path = String(request.url.dropFirst(issuer.count))
         switch path {
-        case "/.well-known/openid-credential-issuer": return ok(issuerMetadata())
+        case "/.well-known/openid-credential-issuer": return handleIssuerMetadata(request)
         case "/.well-known/oauth-authorization-server": return ok(asMetadata())
         case "/.well-known/jwt-vc-issuer": return ok(jwtVcIssuerMetadata())
         case "/token": return try await handleToken(request)
@@ -130,9 +130,24 @@ public actor MockIssuer: HttpTransport {
 
     private var issuedRefreshToken: String?
 
-    /// When set, the issuer metadata carries this `signed_metadata` JWT.
+    /// When set, the issuer serves this JWT (as `application/jwt`) to wallets whose Accept allows it.
     public func setSignedMetadata(_ jws: String) { signedMetadata = jws }
     private var signedMetadata: String?
+
+    /// The `Accept` the wallet sent on the last metadata GET — lets tests assert §12.2.2 negotiation.
+    public private(set) var lastMetadataAccept: String?
+
+    /// Content-negotiated metadata (OpenID4VCI §12.2.2): a signed JWT when the wallet accepts
+    /// `application/jwt` and this issuer signs; otherwise the unsigned JSON document.
+    private func handleIssuerMetadata(_ request: HttpRequest) -> HttpResponse {
+        let accept = request.headers.first { $0.0.caseInsensitiveCompare("Accept") == .orderedSame }?.1
+            ?? "application/json"
+        lastMetadataAccept = accept
+        if let jwt = signedMetadata, accept.contains("application/jwt") {
+            return HttpResponse(status: 200, headers: [("Content-Type", "application/jwt")], body: [UInt8](jwt.utf8))
+        }
+        return ok(issuerMetadata())
+    }
 
     private func handleNonce() -> HttpResponse {
         ok(#"{"c_nonce":"\#(cNonce ?? "c-nonce-xyz")"}"#)
@@ -256,10 +271,9 @@ public actor MockIssuer: HttpTransport {
     }
 
     private func issuerMetadata() -> String {
-        let signed = signedMetadata.map { #""signed_metadata":"\#($0)","# } ?? ""
         return """
         {"credential_issuer":"\(issuer)",
-         \(signed)"credential_endpoint":"\(issuer)/credential",
+         "credential_endpoint":"\(issuer)/credential",
          "nonce_endpoint":"\(issuer)/nonce",
          "deferred_credential_endpoint":"\(issuer)/deferred_credential",
          "notification_endpoint":"\(issuer)/notification",
