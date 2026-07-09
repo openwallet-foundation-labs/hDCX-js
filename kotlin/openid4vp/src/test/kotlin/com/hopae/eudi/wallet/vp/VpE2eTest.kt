@@ -42,6 +42,8 @@ class VpE2eTest {
     private class MockVerifier(
         val area: SoftwareSecureArea,
         val issuerPublic: EcPublicKey,
+        /** §7.3(5.e) judges the KB-JWT `iat` against the verifier's clock — pin it to the wallet's. */
+        val clock: () -> Long = { 1_700_000_000L },
     ) : HttpTransport {
         val clientId = "verifier.example"
         val nonce = "vp-nonce-123"
@@ -96,7 +98,7 @@ class VpE2eTest {
             val presentation = ((vpTokenJson["pid"] as JsonValue.Arr).items.first() as JsonValue.Str).value
             val verified = SdJwtVerifier.verify(
                 SdJwt.parse(presentation), issuerPublic, SigningAlgorithm.ES256,
-                keyBinding = SdJwtVerifier.KbRequirement(clientId, nonce),
+                keyBinding = SdJwtVerifier.KbRequirement(clientId, nonce, now = clock),
             )
             verifiedClaims = verified.claims
             return HttpResponse(200, listOf("Content-Type" to "application/json"), """{"redirect_uri":"https://verifier.example/done"}""".encodeToByteArray())

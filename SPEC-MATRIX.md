@@ -18,7 +18,7 @@ Legend: ✅ implemented · 🟡 partial · ⬜ not yet.
 | JOSE / JWS | RFC 7515 / 7518 subset (compact, ES256/384/512) | ✅ `sdjwt` / `SdJwt` — in-house, fixed-`alg` verification (no negotiation) |
 | JWE | RFC 7518 ECDH-ES direct + A128/192/256GCM | ✅ Concat KDF (RFC 7518 Appendix C vectors) — encrypts `direct_post.jwt` / `dc_api.jwt` responses and OpenID4VCI Credential Requests; decrypts Credential Responses (`JweRecipientKey`). `kid` header per OpenID4VCI §10 |
 | HPKE | RFC 9180 base mode — DHKEM(P-256, HKDF-SHA256) / HKDF-SHA256 / AES-128-GCM | ✅ `mdoc` `Hpke` / `MDoc` — seals the `org-iso-mdoc` DC API response (ISO 18013-7 Annex C); RFC 9180 A.3 test vector passes both languages. Seal only — no verifier-side `open` |
-| SD-JWT | RFC 9901 | ✅ issue / present / verify, KB-JWT, recursive & array disclosures, decoys; RFC disclosure vectors (73 entries) pass both languages. Gaps: KB-JWT `iat` presence-only (no §7.3 time-window check), §7.1(6) `exp`/`nbf` enforced only in the VC layer, §8 JWS JSON serialization absent (optional) |
+| SD-JWT | RFC 9901 | ✅ issue / present / verify, KB-JWT, recursive & array disclosures, decoys; RFC disclosure vectors (73 entries) pass both languages. `alg=none` explicitly rejected on the issuer JWT and KB-JWT (§7.1(2.a)/§7.3(5.b)); KB-JWT `iat` validated against a configurable acceptable window (§7.3(5.e), `KbRequirement.maxAgeSeconds`/`skewSeconds`). Gaps: §7.1(6) `exp`/`nbf` enforced only in the VC layer, §8 JWS JSON serialization absent (optional) |
 | SD-JWT VC | draft-ietf-oauth-sd-jwt-vc-17 (2026-07-06) | 🟡 `SdJwtVcVerifier` — typ/iss/vct enforcement, time validation, issuer-key resolution (`.well-known/jwt-vc-issuer` + x5c), holder binding, status extraction. **Type Metadata (§4) and `vct#integrity` entirely unimplemented**; the legacy `vc+sd-jwt` typ is rejected — a [deliberate non-goal](#deliberate-non-goals) |
 | ISO/IEC 18013-5 mdoc | :2021 | ✅ `mdoc` / `MDoc` — `IssuerSigned`/MSO, `DeviceResponse`, selective disclosure, device signature **and `deviceMac`** (holder + reader), reader auth (§9.1.4). MSO digest SHA-256 only; `DeviceResponse` errors/status semantics not modeled |
 | X.509 PKIX | RFC 5280 | ✅ `trust` / `Trust` — chain validation (path build, validity, basic constraints), SAN, x509_san_dns / x509_hash; x5c adapters for SD-JWT VC issuers, mdoc issuer/reader, and signed issuer metadata |
@@ -59,10 +59,8 @@ Only what is 🟡/⬜ is listed; everything else in the tables above verified cl
 
 | Gap | Spec ref | Detail |
 |---|---|---|
-| KB-JWT `iat` time window | §7.3(5.e) | 🟡 `iat` checked for presence only; no acceptable-window validation (`SdJwt.kt` / `SdJwt.swift` verifyKeyBinding) |
 | `exp`/`nbf` on processed payload | §7.1(6) | 🟡 lives only in the VC layer (`JwtTimeValidator`), not the core `SdJwtVerifier` |
 | Holder rejects SD-JWT+KB from Issuer | §7.2 | ⬜ no guard in `SdJwtHolder` |
-| Explicit `alg=none` rejection | §7.1(2a) | 🟡 only implicit via fixed-alg matching |
 | JWS JSON serialization | §8 (optional) | ⬜ compact only |
 | End-to-end RFC vectors | Appendix A | 🟡 RFC vectors cover disclosures only (73 entries); no full issuer-JWT/presentation/KB fixture — E2E tests self-issue |
 

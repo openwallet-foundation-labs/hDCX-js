@@ -13,6 +13,9 @@ import kotlin.test.assertTrue
 /** Issue → present (subset + KB-JWT) → verify, over the SecureArea port end to end. */
 class SdJwtE2eTest {
 
+    /** The instant the KB-JWT is created; §7.3(5.e) judges it against the verifier's clock. */
+    private val presentedAt = 1_700_000_100L
+
     private fun fixedSalts(): () -> String {
         var n = 0
         return { "salt-%02d".format(++n) }
@@ -89,7 +92,7 @@ class SdJwtE2eTest {
             select = { path -> path in wanted },
             audience = "https://verifier.example",
             nonce = "nonce-123",
-            issuedAt = 1_700_000_100L,
+            issuedAt = presentedAt,
             signer = holderSigner,
         )
 
@@ -97,7 +100,7 @@ class SdJwtE2eTest {
             SdJwt.parse(presented.serialize()),
             issuerKey.publicKey,
             SigningAlgorithm.ES256,
-            keyBinding = SdJwtVerifier.KbRequirement("https://verifier.example", "nonce-123"),
+            keyBinding = SdJwtVerifier.KbRequirement("https://verifier.example", "nonce-123", now = { presentedAt }),
         )
         assertEquals(JsonValue.Str("John"), verified.claims["given_name"])
         assertNull(verified.claims["family_name"], "family_name must stay undisclosed")
@@ -146,7 +149,7 @@ class SdJwtE2eTest {
             select = { true },
             audience = "https://verifier.example",
             nonce = "nonce-123",
-            issuedAt = 1_700_000_100L,
+            issuedAt = presentedAt,
             signer = holderSigner,
         )
 
@@ -154,7 +157,7 @@ class SdJwtE2eTest {
         assertFailsWith<SdJwtException> {
             SdJwtVerifier.verify(
                 presented, issuerKey.publicKey, SigningAlgorithm.ES256,
-                keyBinding = SdJwtVerifier.KbRequirement("https://verifier.example", "other-nonce"),
+                keyBinding = SdJwtVerifier.KbRequirement("https://verifier.example", "other-nonce", now = { presentedAt }),
             )
         }
 
@@ -163,7 +166,7 @@ class SdJwtE2eTest {
         assertFailsWith<SdJwtException> {
             SdJwtVerifier.verify(
                 stripped, issuerKey.publicKey, SigningAlgorithm.ES256,
-                keyBinding = SdJwtVerifier.KbRequirement("https://verifier.example", "nonce-123"),
+                keyBinding = SdJwtVerifier.KbRequirement("https://verifier.example", "nonce-123", now = { presentedAt }),
             )
         }
 
@@ -171,7 +174,7 @@ class SdJwtE2eTest {
         assertFailsWith<SdJwtException> {
             SdJwtVerifier.verify(
                 issued, issuerKey.publicKey, SigningAlgorithm.ES256,
-                keyBinding = SdJwtVerifier.KbRequirement("https://verifier.example", "nonce-123"),
+                keyBinding = SdJwtVerifier.KbRequirement("https://verifier.example", "nonce-123", now = { presentedAt }),
             )
         }
         Unit

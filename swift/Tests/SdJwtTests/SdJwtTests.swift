@@ -133,7 +133,7 @@ final class SdJwtE2eTests: XCTestCase {
             try SdJwt.parse(presented.serialize()),
             issuerKey: issuerKey.publicKey,
             algorithm: .es256,
-            keyBinding: SdJwtVerifier.KbRequirement(audience: "https://verifier.example", nonce: "nonce-123")
+            keyBinding: SdJwtVerifier.KbRequirement(audience: "https://verifier.example", nonce: "nonce-123", now: { 1_700_000_100 })
         )
         XCTAssertEqual(JsonValue.str("John"), verified.claims["given_name"])
         XCTAssertNil(verified.claims["family_name"], "family_name must stay undisclosed")
@@ -174,7 +174,7 @@ final class SdJwtE2eTests: XCTestCase {
         XCTAssertThrowsError(
             try SdJwtVerifier.verify(
                 presented, issuerKey: issuerKey.publicKey, algorithm: .es256,
-                keyBinding: SdJwtVerifier.KbRequirement(audience: "https://verifier.example", nonce: "other")
+                keyBinding: SdJwtVerifier.KbRequirement(audience: "https://verifier.example", nonce: "other", now: { 1_700_000_100 })
             )
         )
 
@@ -187,7 +187,7 @@ final class SdJwtE2eTests: XCTestCase {
         XCTAssertThrowsError(
             try SdJwtVerifier.verify(
                 stripped, issuerKey: issuerKey.publicKey, algorithm: .es256,
-                keyBinding: SdJwtVerifier.KbRequirement(audience: "https://verifier.example", nonce: "nonce-123")
+                keyBinding: SdJwtVerifier.KbRequirement(audience: "https://verifier.example", nonce: "nonce-123", now: { 1_700_000_100 })
             )
         )
 
@@ -195,7 +195,7 @@ final class SdJwtE2eTests: XCTestCase {
         XCTAssertThrowsError(
             try SdJwtVerifier.verify(
                 issued, issuerKey: issuerKey.publicKey, algorithm: .es256,
-                keyBinding: SdJwtVerifier.KbRequirement(audience: "https://verifier.example", nonce: "nonce-123")
+                keyBinding: SdJwtVerifier.KbRequirement(audience: "https://verifier.example", nonce: "nonce-123", now: { 1_700_000_100 })
             )
         )
     }

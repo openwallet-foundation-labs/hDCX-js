@@ -215,13 +215,27 @@ final class SdProcessor {
 
 public enum SdJwtVerifier {
 
+    /// What the verifier requires of a Key Binding JWT (RFC 9901 §7.3 step 5).
+    ///
+    /// The spec leaves the `iat` window to the verifier ("within an acceptable window", §7.3(5.e)), so it
+    /// is policy here: `maxAgeSeconds` bounds how stale a presentation may be — the replay window — and
+    /// `skewSeconds` tolerates a holder clock running slightly fast.
     public struct KbRequirement {
         public let audience: String
         public let nonce: String
+        /// Epoch seconds. Injectable so tests (and offline verification) can pin the moment of judgement.
+        public let now: () -> Int64
+        public let maxAgeSeconds: Int64
+        public let skewSeconds: Int64
 
-        public init(audience: String, nonce: String) {
+        public init(audience: String, nonce: String,
+                    now: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970) },
+                    maxAgeSeconds: Int64 = 300, skewSeconds: Int64 = 60) {
             self.audience = audience
             self.nonce = nonce
+            self.now = now
+            self.maxAgeSeconds = maxAgeSeconds
+            self.skewSeconds = skewSeconds
         }
     }
 
@@ -241,6 +255,7 @@ public enum SdJwtVerifier {
         keyBinding: KbRequirement? = nil
     ) throws -> VerifiedSdJwt {
         let jws = try Jws.parse(sdJwt.jwt)
+        try requireSecureAlg(jws, "issuer-signed JWT") // §7.1(2.a)
         guard jws.verify(key: issuerKey, expected: algorithm) else {
             throw SdJwtError("issuer signature invalid")
         }
@@ -272,6 +287,14 @@ public enum SdJwtVerifier {
         return JwkEc.fromJson(jwk)
     }
 
+    /// RFC 9901 §7.1(2.a) and §7.3(5.b): "The `none` algorithm MUST NOT be accepted." `Jws.verify` would
+    /// already reject it, since the header `alg` must equal the algorithm the caller pinned — but only as
+    /// a signature failure. Naming the rule keeps the refusal explicit and the diagnostic honest.
+    private static func requireSecureAlg(_ jws: Jws, _ where_: String) throws {
+        guard case let .str(alg)? = jws.header["alg"] else { throw SdJwtError("\(where_) has no alg") }
+        if alg.lowercased() == "none" { throw SdJwtError("\(where_) must not use the 'none' algorithm") }
+    }
+
     private static func verifyKeyBinding(
         _ kbJwt: String,
         holderKey: EcPublicKey,
@@ -282,6 +305,7 @@ public enum SdJwtVerifier {
         guard case let .str(typ)? = jws.header["typ"], typ == "kb+jwt" else {
             throw SdJwtError("kb-jwt typ must be kb+jwt")
         }
+        try requireSecureAlg(jws, "kb-jwt") // §7.3(5.b)
         guard case let .str(algName)? = jws.header["alg"],
               let algorithm = signingAlgorithmFromJwsName(algName)
         else { throw SdJwtError("kb-jwt alg unsupported") }
@@ -298,7 +322,14 @@ public enum SdJwtVerifier {
         guard case let .str(aud)? = payload["aud"], aud == requirement.audience else {
             throw SdJwtError("kb-jwt aud mismatch")
         }
-        guard case .numInt? = payload["iat"] else { throw SdJwtError("kb-jwt iat missing") }
+        // §7.3(5.e): the KB-JWT's creation time must fall within the verifier's acceptable window. Presence
+        // alone proves nothing — a KB-JWT minted months ago would otherwise still authorise a presentation.
+        guard case let .numInt(iat)? = payload["iat"] else { throw SdJwtError("kb-jwt iat missing") }
+        let now = requirement.now()
+        if iat > now + requirement.skewSeconds { throw SdJwtError("kb-jwt iat is \(iat - now)s in the future") }
+        if iat < now - requirement.maxAgeSeconds {
+            throw SdJwtError("kb-jwt is \(now - iat)s old; the acceptable window is \(requirement.maxAgeSeconds)s")
+        }
 
         let expected = Base64Url.encode(sha256([UInt8](sdJwt.presentationWithoutKb().utf8)))
         guard case let .str(sdHash)? = payload["sd_hash"], sdHash == expected else {

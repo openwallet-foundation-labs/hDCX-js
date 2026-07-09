@@ -18,6 +18,11 @@ public actor MockVerifier: HttpTransport {
     /// The `kid` of the verifier's encryption JWK; §8.3 makes the wallet repeat it in the JWE header.
     public static let encKid = "verifier-enc-key-1"
 
+    /// The clock the verifier judges the KB-JWT `iat` against (§7.3(5.e)); defaults to real time, which
+    /// matches a live wallet clock. Override to pin it when the presentation uses a fixed `iat`.
+    public var kbClock: () -> Int64 = { Int64(Date().timeIntervalSince1970) }
+    public func setKbClock(_ clock: @escaping () -> Int64) { kbClock = clock }
+
     /// JWE header values the wallet sent on an encrypted response (§8.3 `kid`, 18013-7 B.5.3 `apv`).
     public private(set) var seenJweKid: String?
     public private(set) var seenJweApv: String?
@@ -107,7 +112,7 @@ public actor MockVerifier: HttpTransport {
         }
         let verified = try SdJwtVerifier.verify(
             try SdJwt.parse(presentation), issuerKey: issuerPublic, algorithm: .es256,
-            keyBinding: SdJwtVerifier.KbRequirement(audience: clientId, nonce: nonce))
+            keyBinding: SdJwtVerifier.KbRequirement(audience: clientId, nonce: nonce, now: kbClock))
         verifiedClaims = verified.claims
         return HttpResponse(status: 200, headers: [("Content-Type", "application/json")],
                             body: [UInt8](#"{"redirect_uri":"https://verifier.example/done"}"#.utf8))

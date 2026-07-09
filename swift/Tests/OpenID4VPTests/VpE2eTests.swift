@@ -71,7 +71,7 @@ final class VpE2eTests: XCTestCase {
             }
             let verified = try SdJwtVerifier.verify(
                 try SdJwt.parse(presentation), issuerKey: issuerPublic, algorithm: .es256,
-                keyBinding: SdJwtVerifier.KbRequirement(audience: clientId, nonce: nonce)
+                keyBinding: SdJwtVerifier.KbRequirement(audience: clientId, nonce: nonce, now: { 1_700_000_000 })
             )
             verifiedClaims = verified.claims
             return HttpResponse(status: 200, headers: [("Content-Type", "application/json")],

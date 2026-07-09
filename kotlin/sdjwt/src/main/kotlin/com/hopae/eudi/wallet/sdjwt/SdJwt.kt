@@ -187,7 +187,21 @@ internal class SdProcessor(disclosures: List<Disclosure>) {
 
 object SdJwtVerifier {
 
-    class KbRequirement(val audience: String, val nonce: String)
+    /**
+     * What the verifier requires of a Key Binding JWT (RFC 9901 §7.3 step 5).
+     *
+     * The spec leaves the `iat` window to the verifier ("within an acceptable window", §7.3(5.e)), so it
+     * is policy here: [maxAgeSeconds] bounds how stale a presentation may be — the replay window — and
+     * [skewSeconds] tolerates a holder clock running slightly fast.
+     */
+    class KbRequirement(
+        val audience: String,
+        val nonce: String,
+        /** Epoch seconds. Injectable so tests (and offline verification) can pin the moment of judgement. */
+        val now: () -> Long = { System.currentTimeMillis() / 1000 },
+        val maxAgeSeconds: Long = 300,
+        val skewSeconds: Long = 60,
+    )
 
     class VerifiedSdJwt(
         /** Processed claims: digests resolved, _sd/_sd_alg removed. */
@@ -205,6 +219,7 @@ object SdJwtVerifier {
         keyBinding: KbRequirement? = null,
     ): VerifiedSdJwt {
         val jws = Jws.parse(sdJwt.jwt)
+        requireSecureAlg(jws, "issuer-signed JWT") // §7.1(2.a)
         if (!jws.verify(issuerKey, algorithm)) throw SdJwtException("issuer signature invalid")
 
         val payload = runCatching { JsonValue.parse(jws.payloadBytes.decodeToString()) }
@@ -231,9 +246,20 @@ object SdJwtVerifier {
         return JwkEc.fromJson(jwk)
     }
 
+    /**
+     * RFC 9901 §7.1(2.a) and §7.3(5.b): "The `none` algorithm MUST NOT be accepted." [Jws.verify] would
+     * already reject it, since the header `alg` must equal the algorithm the caller pinned — but only as
+     * a signature failure. Naming the rule keeps the refusal explicit and the diagnostic honest.
+     */
+    private fun requireSecureAlg(jws: Jws, where: String) {
+        val alg = (jws.header["alg"] as? JsonValue.Str)?.value ?: throw SdJwtException("$where has no alg")
+        if (alg.equals("none", ignoreCase = true)) throw SdJwtException("$where must not use the 'none' algorithm")
+    }
+
     private fun verifyKeyBinding(kbJwt: String, holderKey: EcPublicKey, req: KbRequirement, sdJwt: SdJwt) {
         val jws = Jws.parse(kbJwt)
         if ((jws.header["typ"] as? JsonValue.Str)?.value != "kb+jwt") throw SdJwtException("kb-jwt typ must be kb+jwt")
+        requireSecureAlg(jws, "kb-jwt") // §7.3(5.b)
         val algName = (jws.header["alg"] as? JsonValue.Str)?.value ?: throw SdJwtException("kb-jwt alg missing")
         val algorithm = signingAlgorithmFromJwsName(algName) ?: throw SdJwtException("kb-jwt alg unsupported")
         if (!jws.verify(holderKey, algorithm)) throw SdJwtException("kb-jwt signature invalid")
@@ -242,7 +268,15 @@ object SdJwtVerifier {
             ?: throw SdJwtException("kb-jwt payload must be an object")
         if ((payload["nonce"] as? JsonValue.Str)?.value != req.nonce) throw SdJwtException("kb-jwt nonce mismatch")
         if ((payload["aud"] as? JsonValue.Str)?.value != req.audience) throw SdJwtException("kb-jwt aud mismatch")
-        if (payload["iat"] !is JsonValue.NumInt) throw SdJwtException("kb-jwt iat missing")
+
+        // §7.3(5.e): the KB-JWT's creation time must fall within the verifier's acceptable window. Presence
+        // alone proves nothing — a KB-JWT minted months ago would otherwise still authorise a presentation.
+        val iat = (payload["iat"] as? JsonValue.NumInt)?.value ?: throw SdJwtException("kb-jwt iat missing")
+        val now = req.now()
+        if (iat > now + req.skewSeconds) throw SdJwtException("kb-jwt iat is ${iat - now}s in the future")
+        if (iat < now - req.maxAgeSeconds) {
+            throw SdJwtException("kb-jwt is ${now - iat}s old; the acceptable window is ${req.maxAgeSeconds}s")
+        }
 
         val expected = Base64Url.encode(sha256(sdJwt.presentationWithoutKb().encodeToByteArray()))
         if ((payload["sd_hash"] as? JsonValue.Str)?.value != expected) throw SdJwtException("kb-jwt sd_hash mismatch")
