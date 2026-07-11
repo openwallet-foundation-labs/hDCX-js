@@ -103,9 +103,12 @@ are not lost; each deserves its own triage.
     `PLAY_INTEGRITY_PACKAGE_NAME` + Application Default Credentials; the `dev-integrity:<nonce>` stub stays the
     default. **Device-verified end-to-end** against a real Google Cloud project (`hopae-wallet`, project number
     1048824403731) + a service account: the app (`com.hopae.axle.wallet`) requested a real token, and
-    `decodeIntegrityToken` returned the expected verdict — **`deviceIntegrity: MEETS_DEVICE_INTEGRITY`** (genuine
-    device) and **`appIntegrity: UNRECOGNIZED_VERSION`** (side-loaded debug build, not on Play; would be
-    `PLAY_RECOGNIZED` after an internal-testing upload). Decode helper: `wallet-provider/tools/decode-integrity.mjs`.
+    `decodeIntegrityToken` returned the expected verdict. Both distribution paths confirmed on-device:
+    side-loaded debug → `appIntegrity: UNRECOGNIZED_VERSION` / `appLicensingVerdict: UNEVALUATED`; a signed
+    release AAB installed via a **Play Console internal-testing** track → **`appIntegrity: PLAY_RECOGNIZED`**
+    (cert = the Play app-signing key) / **`LICENSED`**. `deviceIntegrity: MEETS_DEVICE_INTEGRITY` in both.
+    Decode helper: `wallet-provider/tools/decode-integrity.mjs`; setup guide: `wallet-provider/PLAY-INTEGRITY.md`.
+    Release signing: `demo/keystore.properties` (gitignored) → `./gradlew :app:bundleRelease`.
   - [x] **Swift parity — platform-agnostic layer.** `ClientAuthProvider` protocol (`WalletClientAuth`
     conforms), vci `clientAuth` takes it; `AttestationClientAuth` (Wallet — persistent instance key,
     fresh WUA per issuer, §4.4.1) wired in `Wallet.swift`; new `WalletProvider` SPM target with the reference
