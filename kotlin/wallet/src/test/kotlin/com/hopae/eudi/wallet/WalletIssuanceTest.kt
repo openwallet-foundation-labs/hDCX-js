@@ -82,6 +82,7 @@ class WalletIssuanceTest {
         val log = wallet.transactions.query(type = com.hopae.eudi.wallet.txlog.TransactionType.ISSUANCE)
         assertEquals(1, log.size, "one issuance attempt recorded")
         assertEquals(com.hopae.eudi.wallet.txlog.TransactionStatus.ERROR, log.single().status)
+        assertTrue(log.single().issuer!!.isNotBlank(), "issuer captured from the offer even on failure")
 
         wallet.close()
     }

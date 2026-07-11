@@ -14,7 +14,14 @@ public final class IssuanceSession: @unchecked Sendable {
     private var task: Task<Void, Never>?
     private var authContinuation: CheckedContinuation<String, Never>?
     private var txCodeContinuation: CheckedContinuation<String, Never>?
+    private var _issuer: String?
     private let flow: (IssuanceSession) async throws -> Void
+
+    /// The credential issuer, set by the flow as soon as it is known, so a failure can be logged against it.
+    var issuer: String? {
+        get { locked { _issuer } }
+        set { locked { _issuer = newValue } }
+    }
 
     init(_ flow: @escaping (IssuanceSession) async throws -> Void) {
         self.flow = flow

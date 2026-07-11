@@ -23,6 +23,9 @@ class IssuanceSession internal constructor(
     private var authContinuation: CompletableDeferred<String>? = null
     private var txCodeContinuation: CompletableDeferred<String>? = null
 
+    /** The credential issuer, set by the flow as soon as it is known, so a failure can be logged against it. */
+    internal var issuer: String? = null
+
     internal fun launch() {
         job = scope.launch {
             try {

@@ -29,6 +29,10 @@ public struct IssuanceService {
     public func start(_ request: IssuanceRequest) -> IssuanceSession {
         session { s in
             s.emit(.processing)
+            switch request.source { // for failure logging — known up front from the offer / issuer
+            case let .fromOffer(offer): s.issuer = offer.raw.credentialIssuer
+            case let .fromIssuer(issuer): s.issuer = issuer
+            }
             let built = try await buildKeys(request.keySpec, batchSize: request.policy.batchSize)
             let response: CredentialResponse
             switch request.source {
@@ -55,6 +59,7 @@ public struct IssuanceService {
             guard let envelope = try await store.get(credentialId) else { throw IssuanceError.credentialRequestFailed("credential not found") }
             guard case let .deferred(transactionContext, _) = envelope.lifecycle else { throw IssuanceError.credentialRequestFailed("credential is not deferred") }
             let ctx = try FollowUpContext.decode(transactionContext)
+            s.issuer = ctx.credentialIssuer
             let keys = try await rebuildKeys(ctx)
             let response = try await catchingVci { try await vci.fetchDeferredCredential(ctx.toCredentialResponse(), keys: keys) }
 
@@ -83,6 +88,7 @@ public struct IssuanceService {
         session { s in
             s.emit(.processing)
             guard let ctx = try await loadFollowUp(credentialId) else { throw IssuanceError.credentialRequestFailed("credential cannot be reissued") }
+            s.issuer = ctx.credentialIssuer
             let fresh = try await buildKeys(KeySpec(secureArea: secureArea.id), batchSize: ctx.policy.batchSize, dpopKey: ctx.dpopKey)
             let response = try await catchingVci { try await vci.reissue(ctx.toCredentialResponse(), keys: fresh.keys) }
             let id = try await persistIssued(response, fresh.proofKeys.map { $0.handle }, ctx.dpopKey, ctx.policy, existingId: credentialId)
@@ -98,9 +104,9 @@ public struct IssuanceService {
             } catch is CancellationError {
                 throw CancellationError() // a cancelled session is not a failed issuance — don't record it
             } catch {
-                // ARF/GDPR: record the failed issuance attempt (start / resumeDeferred / reissue); the error
-                // message carries the context. Rethrown so the session still ends in .failed.
-                _ = await txlog.recordIssuance(issuer: "", documents: [], status: .error, error: String(describing: error))
+                // ARF/GDPR: record the failed issuance attempt (start / resumeDeferred / reissue); the issuer is
+                // captured once known (empty only for failures before that, e.g. a missing credential).
+                _ = await txlog.recordIssuance(issuer: session.issuer ?? "", documents: [], status: .error, error: String(describing: error))
                 throw error
             }
         }

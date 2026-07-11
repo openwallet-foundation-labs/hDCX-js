@@ -57,6 +57,10 @@ class IssuanceService internal constructor(
     /** Starts an issuance session — pre-authorized or authorization-code grant, driven as a state machine. */
     fun start(request: IssuanceRequest): IssuanceSession = session {
         emit(IssuanceState.Processing)
+        issuer = when (val src = request.source) { // for failure logging — known up front from the offer / issuer
+            is IssuanceRequest.Source.FromOffer -> src.offer.credentialIssuer
+            is IssuanceRequest.Source.FromIssuer -> src.credentialIssuer
+        }
         val built = buildKeys(request.keySpec, request.policy.batchSize)
         val response = when (val source = request.source) {
             is IssuanceRequest.Source.FromOffer -> issueFromOffer(this, source.offer, request, built.keys)
@@ -83,6 +87,7 @@ class IssuanceService internal constructor(
         val deferred = envelope.lifecycle as? EnvelopeLifecycle.Deferred
             ?: throw WalletError.Issuance.CredentialRequestFailed("credential is not deferred")
         val ctx = FollowUpContext.decode(deferred.transactionContext)
+        issuer = ctx.credentialIssuer
         val response = catchingVci { vci.fetchDeferredCredential(ctx.toCredentialResponse(), rebuildKeys(ctx)) }
 
         // §9.2: still deferred — refresh the stored transaction_id + retryAfter and report Deferred again.
@@ -106,6 +111,7 @@ class IssuanceService internal constructor(
     fun reissue(credentialId: CredentialId): IssuanceSession = session {
         emit(IssuanceState.Processing)
         val ctx = loadFollowUp(credentialId) ?: throw WalletError.Issuance.CredentialRequestFailed("credential cannot be reissued")
+        issuer = ctx.credentialIssuer
         val fresh = buildKeys(KeySpec(secureArea = secureArea.id), ctx.policy.batchSize, dpopKey = ctx.dpopKey)
         val response = catchingVci { vci.reissue(ctx.toCredentialResponse(), fresh.keys) }
         val id = persistIssued(response, fresh.proofKeys.map { it.handle }, ctx.dpopKey, ctx.policy, existingId = credentialId)
@@ -120,8 +126,8 @@ class IssuanceService internal constructor(
                 throw e // a cancelled session is not a failed issuance — don't record it
             } catch (e: Throwable) {
                 // ARF/GDPR: record the failed issuance attempt. Covers start / resumeDeferred / reissue; the
-                // error message carries the context. Rethrown so the session still ends in Failed.
-                txlog.recordIssuance(issuer = "", documents = emptyList(), status = TransactionStatus.ERROR, error = e.message ?: e.toString())
+                // issuer is captured once known (empty only for failures before that, e.g. a missing credential).
+                txlog.recordIssuance(issuer = issuer ?: "", documents = emptyList(), status = TransactionStatus.ERROR, error = e.message ?: e.toString())
                 throw e
             }
         }.also { it.launch() }
