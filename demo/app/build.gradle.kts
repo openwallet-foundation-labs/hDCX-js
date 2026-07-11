@@ -8,7 +8,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.hopae.eudi.demo"
+        applicationId = "com.hopae.axle.wallet"
         minSdk = 29
         targetSdk = 36
         versionCode = 1

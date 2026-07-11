@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Axle mark (option F): a wheel with a five-point EU star as the hub. Sized with generous padding. -->
+    <!-- wheel (ring) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFCC00"
+        android:strokeWidth="6"
+        android:pathData="M34,54 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0" />
+    <!-- EU star hub -->
+    <path
+        android:fillColor="#FFCC00"
+        android:pathData="M54,44.5 L56.13,51.06 L63.03,51.06 L57.45,55.12 L59.58,61.69 L54,57.63 L48.42,61.69 L50.55,55.12 L44.97,51.06 L51.87,51.06 Z" />
+</vector>
