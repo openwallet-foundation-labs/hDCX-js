@@ -84,8 +84,11 @@ are not lost; each deserves its own triage.
     tested); demo reader exposes 00000008, holder reads + verifies (central client mode); **device-verified**.
   - [x] **#29 timeouts + cancellation/failure cleanup** — `receive`/peer-wait/notify bounded; connect tears
     down a half-open GATT/scanner on failure or cancellation. MTU already negotiated.
-  - [ ] **#29 automatic reconnect** — deferred: single-use `CompletableDeferred`/`Channel` needs a
-    state-machine refactor; mid-session reconnect is meaningless for mdoc (keys/counters bound to the conn).
+  - [x] **#29 initial connect retry** (commit `7aac4e7`) — the GATT client retries the flaky first
+    `connectGatt` (Android GATT_ERROR 133) up to 3× with fresh per-attempt state; timeout retryable,
+    cancellation aborts; stale callbacks guarded by `g === gatt`. Device-verified (happy path + clean
+    cancellation). Note: this is the only meaningful "reconnect" — mdoc has no *session* resumption
+    (keys/counters bound to the connection), so a mid-session drop restarts from engagement, by design.
   - [ ] **#31 promote demo adapters into a supported Android library module** — not started (needs a new
     AGP library module; the pure-Kotlin `kotlin/` tree can't host `android.bluetooth`).
 - **Test infrastructure** (audit #21–#22): shared mdoc golden vectors; RFC 9901 end-to-end fixtures.
