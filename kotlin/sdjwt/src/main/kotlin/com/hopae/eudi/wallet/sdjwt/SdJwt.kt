@@ -77,6 +77,15 @@ class SdJwt(
             }
             return SdJwt(parts[0], disclosures, kbJwt = parts.last().ifEmpty { null })
         }
+
+        /**
+         * Parses an SD-JWT received from an Issuer. RFC 9901 §7.2: an SD-JWT delivered by the Issuer MUST
+         * NOT carry a Key Binding JWT — the KB-JWT is the Holder's to add at presentation time. An
+         * SD-JWT+KB from the Issuer is rejected.
+         */
+        fun parseFromIssuer(text: String): SdJwt = parse(text).also {
+            if (it.kbJwt != null) throw SdJwtException("issuer delivered an SD-JWT+KB (RFC 9901 §7.2)")
+        }
     }
 }
 

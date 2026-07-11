@@ -159,6 +159,7 @@ public struct IssuanceService {
 
     private func persistIssued(_ response: CredentialResponse, _ proofKeys: [KeyHandle], _ dpopKey: KeyHandle, _ policy: CredentialPolicy, existingId: CredentialId?) async throws -> CredentialId {
         guard !response.credentials.isEmpty else { throw IssuanceError.credentialRequestFailed("issuer returned no credentials") }
+        for credential in response.credentials { try rejectIssuerBoundKb(credential) }
         let (format, _) = try decode(response.credentials[0])
         var instances: [CredentialInstance] = []
         for (i, credential) in response.credentials.enumerated() {
@@ -204,6 +205,17 @@ public struct IssuanceService {
     }
 
     private func newId() -> CredentialId { CredentialId("cred-" + Base64Url.encode(rng.nextBytes(12))) }
+
+    /// RFC 9901 §7.2: the Holder must reject an SD-JWT the Issuer delivered already carrying a KB-JWT — the
+    /// KB-JWT is the Holder's to add at presentation. Enforced here, at ingestion, before anything is stored.
+    private func rejectIssuerBoundKb(_ credential: IssuedCredential) throws {
+        if credential.format == "mso_mdoc" { return }
+        do {
+            _ = try SdJwt.parseFromIssuer(credential.credential)
+        } catch let e as SdJwtError {
+            throw IssuanceError.credentialRequestFailed(e.description)
+        }
+    }
 
     private func decode(_ credential: IssuedCredential) throws -> (CredentialFormat, [UInt8]) {
         if credential.format == "mso_mdoc" {

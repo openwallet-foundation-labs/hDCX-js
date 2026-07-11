@@ -4,6 +4,7 @@ import com.hopae.eudi.wallet.mdoc.IssuerSigned
 import com.hopae.eudi.wallet.sdjwt.Base64Url
 import com.hopae.eudi.wallet.sdjwt.JsonValue
 import com.hopae.eudi.wallet.sdjwt.SdJwt
+import com.hopae.eudi.wallet.sdjwt.SdJwtException
 import com.hopae.eudi.wallet.sdjwt.SdJwtHolder
 import com.hopae.eudi.wallet.sdjwt.SecureAreaJwsSigner
 import com.hopae.eudi.wallet.spi.CredentialFormat
@@ -162,6 +163,7 @@ class IssuanceService internal constructor(
 
     private suspend fun persistIssued(response: CredentialResponse, proofKeys: List<KeyHandle>, dpopKey: KeyHandle, policy: CredentialPolicy, existingId: CredentialId?): CredentialId {
         if (response.credentials.isEmpty()) throw WalletError.Issuance.CredentialRequestFailed("issuer returned no credentials")
+        response.credentials.forEach { rejectIssuerBoundKb(it) }
         val format = decode(response.credentials.first()).first
         val instances = response.credentials.mapIndexed { i, credential -> CredentialInstance(proofKeys[i], decode(credential).second) }
         val id = existingId ?: newId()
@@ -216,6 +218,19 @@ class IssuanceService internal constructor(
     }
 
     private fun newId(): CredentialId = CredentialId("cred-" + Base64Url.encode(rng.nextBytes(12)))
+
+    /**
+     * RFC 9901 §7.2: the Holder must reject an SD-JWT the Issuer delivered already carrying a KB-JWT — the
+     * KB-JWT is the Holder's to add at presentation. Enforced here, at ingestion, before anything is stored.
+     */
+    private fun rejectIssuerBoundKb(credential: IssuedCredential) {
+        if (credential.format == "mso_mdoc") return
+        try {
+            SdJwt.parseFromIssuer(credential.credential)
+        } catch (e: SdJwtException) {
+            throw WalletError.Issuance.CredentialRequestFailed(e.message ?: "invalid issued SD-JWT", e)
+        }
+    }
 
     /** Determines the format + raw payload bytes for storage (SD-JWT compact string / mdoc IssuerSigned CBOR). */
     private fun decode(credential: IssuedCredential): Pair<CredentialFormat, ByteArray> = when (credential.format) {

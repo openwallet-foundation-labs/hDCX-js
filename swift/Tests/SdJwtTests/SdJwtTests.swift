@@ -90,6 +90,20 @@ final class SdJwtE2eTests: XCTestCase {
         }
     }
 
+    /// RFC 9901 §7.2: a Holder must reject an SD-JWT the Issuer already bound with a KB-JWT.
+    func testParseFromIssuerRejectsSdJwtWithKb() async throws {
+        let area = SoftwareSecureArea()
+        let issuerKey = try await area.createKey(spec: KeySpec(secureArea: area.id, algorithm: .es256))
+        let holderKeyInfo = try await area.createKey(spec: KeySpec(secureArea: area.id, algorithm: .es256))
+        let issuerSigner = SecureAreaJwsSigner(area: area, key: issuerKey.handle, algorithm: .es256)
+
+        let plain = try await issueSample(issuerSigner: issuerSigner, holderKey: holderKeyInfo.publicKey).serialize()
+        // A genuine issued SD-JWT (no KB-JWT) is accepted.
+        XCTAssertNil(try SdJwt.parseFromIssuer(plain).kbJwt)
+        // The same credential with a KB-JWT appended (as if the issuer bound it) is rejected.
+        XCTAssertThrowsError(try SdJwt.parseFromIssuer(plain + "issuer.bound.kbjwt"))
+    }
+
     func testIssuePresentVerify() async throws {
         let area = SoftwareSecureArea()
         let issuerKey = try await area.createKey(spec: KeySpec(secureArea: area.id, algorithm: .es256))

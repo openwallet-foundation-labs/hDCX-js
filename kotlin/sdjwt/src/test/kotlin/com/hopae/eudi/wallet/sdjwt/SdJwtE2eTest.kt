@@ -49,6 +49,21 @@ class SdJwtE2eTest {
         }
     }
 
+    /** RFC 9901 §7.2: a Holder must reject an SD-JWT the Issuer already bound with a KB-JWT. */
+    @Test
+    fun parseFromIssuerRejectsSdJwtWithKb() = runBlocking {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val holderKeyInfo = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val issuerSigner = SecureAreaJwsSigner(area, issuerKey.handle, SigningAlgorithm.ES256)
+
+        val plain = issueSample(issuerSigner, holderKeyInfo.publicKey).serialize() // ends with '~', no KB
+        // A genuine issued SD-JWT (no KB-JWT) is accepted.
+        assertNull(SdJwt.parseFromIssuer(plain).kbJwt)
+        // The same credential with a KB-JWT appended (as if the issuer bound it) is rejected.
+        assertFailsWith<SdJwtException> { SdJwt.parseFromIssuer(plain + "issuer.bound.kbjwt") }
+    }
+
     @Test
     fun issuePresentVerify() = runBlocking {
         val area = SoftwareSecureArea()

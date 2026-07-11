@@ -103,6 +103,15 @@ public struct SdJwt {
         let last = parts.last!
         return SdJwt(jwt: parts[0], disclosures: disclosures, kbJwt: last.isEmpty ? nil : last)
     }
+
+    /// Parses an SD-JWT received from an Issuer. RFC 9901 §7.2: an SD-JWT delivered by the Issuer MUST
+    /// NOT carry a Key Binding JWT — the KB-JWT is the Holder's to add at presentation time. An
+    /// SD-JWT+KB from the Issuer is rejected.
+    public static func parseFromIssuer(_ text: String) throws -> SdJwt {
+        let sdJwt = try parse(text)
+        guard sdJwt.kbJwt == nil else { throw SdJwtError("issuer delivered an SD-JWT+KB (RFC 9901 §7.2)") }
+        return sdJwt
+    }
 }
 
 /// Shared digest-resolution walker (RFC 9901 §7.3 processing): used by the verifier
