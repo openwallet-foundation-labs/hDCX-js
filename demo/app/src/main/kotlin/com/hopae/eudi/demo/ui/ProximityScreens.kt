@@ -123,6 +123,8 @@ fun ProximityHolderDialog(wallet: Wallet, onClose: () -> Unit) {
                 s.state.collect { st ->
                     when (st) {
                         is ProximityState.EngagementReady -> {
+                            // Central client mode: arm Ident verification now that the engagement (EDeviceKey) exists.
+                            client?.armIdent(DeviceEngagement.eDeviceKeyBytes(st.deviceEngagement))
                             val ndef = st.handoverNdef
                             if (ndef != null) { // NFC static handover — serve over HCE, no QR
                                 NfcEngagementService.ndefMessage = ndef
@@ -227,7 +229,8 @@ fun ProximityReaderScreen(wallet: Wallet) {
                 val central = ble.centralClientUuid
                 val transport: ProximityTransport = when {
                     peripheral != null -> BleGattClientTransport(context, Ble.bytesToUuid(peripheral), Ble.PERIPHERAL_SERVER).also { it.connect() }
-                    central != null -> BleGattServerTransport(context, Ble.bytesToUuid(central), Ble.CENTRAL_CLIENT).also { it.start() }
+                    // Central client mode: we're the GATT server → expose the Ident characteristic (§8.3.3.1.1.4).
+                    central != null -> BleGattServerTransport(context, Ble.bytesToUuid(central), Ble.CENTRAL_CLIENT, identKey = DeviceEngagement.eDeviceKeyBytes(engagement)).also { it.start() }
                     else -> { status = "❌ Engagement carries no BLE UUID"; return@launch }
                 }
                 status = "Requesting documents…"

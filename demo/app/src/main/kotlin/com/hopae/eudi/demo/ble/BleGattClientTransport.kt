@@ -17,6 +17,7 @@ import android.content.Context
 import android.os.Build
 import android.os.ParcelUuid
 import com.hopae.eudi.demo.LogStore
+import com.hopae.eudi.wallet.proximity.DeviceEngagement
 import com.hopae.eudi.wallet.spi.ProximityTransport
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
@@ -37,8 +38,22 @@ class BleGattClientTransport(
     private val serviceUuid: UUID,
     private val uuids: BleModeUuids = Ble.PERIPHERAL_SERVER,
     private val advertisedMethods: List<ByteArray> = emptyList(), // set when a holder uses this in central client mode
+    identKey: ByteArray? = null,
+    /** Upper bound on a single [receive]; guards against a stalled peer (no infinite wait). */
+    private val receiveTimeoutMs: Long = 60_000,
 ) : ProximityTransport {
     override fun retrievalMethods(): List<ByteArray> = advertisedMethods
+
+    /**
+     * ISO 18013-5 §8.3.3.1.1.4: the raw `EDeviceKeyBytes` used to verify the reader's Ident characteristic.
+     * Settable after construction because the holder only learns its ephemeral key once the SDK emits the
+     * engagement — later than the transport is created. Null ⇒ Ident is not verified (spec-optional).
+     */
+    @Volatile
+    private var identKey: ByteArray? = identKey
+
+    /** Arms Ident verification with the engagement's `EDeviceKeyBytes` (call before the connection completes). */
+    fun armIdent(eDeviceKeyBytes: ByteArray) { identKey = eDeviceKeyBytes }
 
     private val manager = context.getSystemService(BluetoothManager::class.java)
     private var gatt: BluetoothGatt? = null
@@ -51,22 +66,50 @@ class BleGattClientTransport(
     private val assembling = ByteArrayOutputStream()
     private val connectedSignal = CompletableDeferred<Boolean>()
     private var pending: CompletableDeferred<Boolean>? = null
+    private var pendingRead: CompletableDeferred<ByteArray>? = null
 
-    /** Scans, connects, subscribes to notifications, negotiates MTU, and signals start. */
+    /**
+     * Scans, connects, subscribes to notifications, negotiates MTU, and signals start. On any failure (or
+     * coroutine cancellation) the half-open GATT connection and scanner are torn down before rethrowing, so a
+     * failed attempt never leaks a connection.
+     */
     suspend fun connect() {
-        val device = scan()
-        gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
-        withTimeout(15_000) { connectedSignal.await() }
-        awaitOp { gatt!!.requestMtu(517) }
-        awaitOp { gatt!!.discoverServices() }
-        val service = gatt!!.getService(serviceUuid) ?: error("peer service $serviceUuid not found")
-        stateChar = service.getCharacteristic(uuids.state)
-        c2sChar = service.getCharacteristic(uuids.client2Server)
-        s2cChar = service.getCharacteristic(uuids.server2Client)
-        enableNotify(stateChar!!)
-        enableNotify(s2cChar!!)
-        writeChar(stateChar!!, byteArrayOf(0x01), BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) // STATE_START
-        LogStore.log("BLE client connected + subscribed (mtu=$mtu)")
+        try {
+            val device = scan()
+            gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
+            withTimeout(15_000) { connectedSignal.await() }
+            awaitOp { gatt!!.requestMtu(517) }
+            awaitOp { gatt!!.discoverServices() }
+            val service = gatt!!.getService(serviceUuid) ?: error("peer service $serviceUuid not found")
+            stateChar = service.getCharacteristic(uuids.state)
+            c2sChar = service.getCharacteristic(uuids.client2Server)
+            s2cChar = service.getCharacteristic(uuids.server2Client)
+            enableNotify(stateChar!!)
+            enableNotify(s2cChar!!)
+            verifyIdent(service) // §8.3.3.1.1.4 — no-op unless identKey was supplied
+            writeChar(stateChar!!, byteArrayOf(0x01), BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) // STATE_START
+            LogStore.log("BLE client connected + subscribed (mtu=$mtu)")
+        } catch (e: Throwable) {
+            stop() // failure/cancellation: don't leak the half-open GATT + scanner
+            throw e
+        }
+    }
+
+    /**
+     * ISO 18013-5 §8.3.3.1.1.4: verify the reader's Ident characteristic (00000008) equals
+     * `HKDF(EDeviceKeyBytes, "BLEIdent")`, confirming we connected to the reader that scanned this engagement.
+     * Terminates on mismatch. No-op when [identKey] is null or the reader exposes no Ident characteristic.
+     */
+    private suspend fun verifyIdent(service: android.bluetooth.BluetoothGattService) {
+        val key = identKey ?: return
+        val identChar = service.getCharacteristic(Ble.IDENT) ?: return
+        val read = CompletableDeferred<ByteArray>()
+        pendingRead = read
+        check(gatt!!.readCharacteristic(identChar)) { "Ident read failed to start" }
+        val value = withTimeout(10_000) { read.await() }
+        val expected = DeviceEngagement.bleIdent(key)
+        if (!value.contentEquals(expected)) throw IllegalStateException("BLE Ident mismatch — wrong mdoc reader")
+        LogStore.log("BLE Ident verified")
     }
 
     private suspend fun scan(): BluetoothDevice {
@@ -104,12 +147,13 @@ class BleGattClientTransport(
         LogStore.log("BLE client sent ${message.size}B")
     }
 
-    override suspend fun receive(): ByteArray = incoming.receive()
+    override suspend fun receive(): ByteArray = withTimeout(receiveTimeoutMs) { incoming.receive() }
 
     override suspend fun close() = stop()
 
     /** Synchronous teardown, safe to call from a Compose `onDispose`. */
     fun stop() {
+        if (pendingRead?.isCompleted == false) pendingRead?.completeExceptionally(IllegalStateException("transport closed"))
         runCatching { gatt?.disconnect() }
         runCatching { gatt?.close() }
         gatt = null
@@ -165,6 +209,17 @@ class BleGattClientTransport(
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) { pending?.complete(status == BluetoothGatt.GATT_SUCCESS) }
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) { pending?.complete(status == BluetoothGatt.GATT_SUCCESS) }
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) { pending?.complete(status == BluetoothGatt.GATT_SUCCESS) }
+
+        override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) pendingRead?.complete(value)
+            else pendingRead?.completeExceptionally(IllegalStateException("Ident read failed (status $status)"))
+        }
+
+        // Pre-Tiramisu delivers the read value via the characteristic itself.
+        @Deprecated("Deprecated in Java")
+        override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
+            @Suppress("DEPRECATION") onCharacteristicRead(g, c, c.value ?: ByteArray(0), status)
+        }
 
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
             when (c.uuid) {

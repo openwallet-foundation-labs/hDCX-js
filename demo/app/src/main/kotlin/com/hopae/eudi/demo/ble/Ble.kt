@@ -22,6 +22,9 @@ object Ble {
     /** mdoc central client mode: State / Client2Server / Server2Client = 00000005/6/7. */
     val CENTRAL_CLIENT = BleModeUuids(mdocUuid(5), mdocUuid(6), mdocUuid(7))
 
+    /** ISO 18013-5 §8.3.3.1.1.4 Ident characteristic (00000008, Read) — only in the reader's service (central client mode). */
+    val IDENT: UUID = mdocUuid(8)
+
     private fun mdocUuid(n: Int): UUID = UUID.fromString("0000000$n-a123-48ce-896b-4c76973373e6")
 
     /** 16-byte big-endian encoding of [uuid] (as the DeviceEngagement carries it). */

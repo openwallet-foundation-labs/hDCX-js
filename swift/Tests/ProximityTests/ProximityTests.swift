@@ -27,6 +27,23 @@ final class ProximityTests: XCTestCase {
         XCTAssertEqual(hex("3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"), okm)
     }
 
+    /// §8.3.3.1.1.4: the BLE Ident = HKDF-SHA256(EDeviceKeyBytes, ∅, "BLEIdent", 16), same on both sides.
+    func testBleIdentDerivation() throws {
+        let eDevice = EphemeralKeyPair()
+        let engagement = try DeviceEngagement.qr(eDeviceKey: eDevice.publicKey)
+
+        let ikm = try DeviceEngagement.eDeviceKeyBytes(engagement)
+        let ident = DeviceEngagement.bleIdent(ikm)
+        XCTAssertEqual(16, ident.count)
+        let expected = HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: Data(ikm)),
+                                              salt: Data(), info: Data("BLEIdent".utf8), outputByteCount: 16)
+            .withUnsafeBytes { [UInt8]($0) }
+        XCTAssertEqual(expected, ident)
+        // a different engagement (different EDeviceKey) yields a different Ident
+        let other = try DeviceEngagement.qr(eDeviceKey: EphemeralKeyPair().publicKey)
+        XCTAssertNotEqual(ident, DeviceEngagement.bleIdent(try DeviceEngagement.eDeviceKeyBytes(other)))
+    }
+
     private func transcriptBytes(_ eDevice: EphemeralKeyPair, _ eReader: EphemeralKeyPair) throws -> [UInt8] {
         let de = try DeviceEngagement.qr(eDeviceKey: eDevice.publicKey)
         return try ProximitySessionTranscript.encode(try ProximitySessionTranscript.build(deviceEngagement: de, eReaderKey: eReader.publicKey))

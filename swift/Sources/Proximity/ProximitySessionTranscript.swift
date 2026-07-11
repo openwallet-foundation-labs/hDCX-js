@@ -1,4 +1,6 @@
 import CborCose
+import Crypto
+import Foundation
 
 private let tagEncodedCbor: UInt64 = 24
 
@@ -90,5 +92,29 @@ public enum DeviceEngagement {
             throw ProximityError("missing EDeviceKey")
         }
         return try CoseKey.decode(try CborDecoder.decode(keyBytes))
+    }
+
+    /// The raw `EDeviceKeyBytes` (`#6.24(bstr .cbor COSE_Key)`, §9.1.1.4) taken verbatim from a QR
+    /// `DeviceEngagement` — the IKM for the BLE `Ident` characteristic. Verbatim (not re-encoded) so both
+    /// sides derive the same bytes regardless of map-key ordering.
+    public static func eDeviceKeyBytes(_ engagement: [UInt8]) throws -> [UInt8] {
+        guard case let .map(entries) = try CborDecoder.decode(engagement) else {
+            throw ProximityError("DeviceEngagement must be a map")
+        }
+        guard let security = entries.first(where: { if case let .uint(k) = $0.0 { return k == 1 }; return false })?.1,
+              case let .array(items) = security, items.count >= 2 else {
+            throw ProximityError("missing Security")
+        }
+        return try CborEncoder.encode(items[1])
+    }
+
+    /// ISO/IEC 18013-5 §8.3.3.1.1.4 BLE `Ident` characteristic value:
+    /// `HKDF-SHA256(IKM = EDeviceKeyBytes, salt = ∅, info = "BLEIdent", L = 16)`. In central client mode the
+    /// mdoc **reader** (GATT server) exposes it on characteristic `…00000008`; the mdoc (GATT client) reads and
+    /// verifies it to confirm it connected to the reader that scanned this engagement, and terminates on mismatch.
+    public static func bleIdent(_ eDeviceKeyBytes: [UInt8]) -> [UInt8] {
+        let key = HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: Data(eDeviceKeyBytes)),
+                                         salt: Data(), info: Data("BLEIdent".utf8), outputByteCount: 16)
+        return key.withUnsafeBytes { Array($0) }
     }
 }

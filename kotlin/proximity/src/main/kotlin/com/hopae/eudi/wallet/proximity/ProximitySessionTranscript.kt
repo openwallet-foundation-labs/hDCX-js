@@ -3,6 +3,7 @@ package com.hopae.eudi.wallet.proximity
 import com.hopae.eudi.wallet.cbor.Cbor
 import com.hopae.eudi.wallet.cbor.CborDecoder
 import com.hopae.eudi.wallet.cbor.CborEncoder
+import com.hopae.eudi.wallet.cbor.Hkdf
 import com.hopae.eudi.wallet.cbor.cose.CoseKey
 import com.hopae.eudi.wallet.cbor.cose.EcPublicKey
 
@@ -92,4 +93,26 @@ object DeviceEngagement {
             ?: throw ProximityException("EDeviceKey not a COSE_Key")
         return CoseKey.decode(coseKey)
     }
+
+    /**
+     * The raw `EDeviceKeyBytes` (`#6.24(bstr .cbor COSE_Key)`, §9.1.1.4) taken verbatim from a QR
+     * `DeviceEngagement` — the IKM for the BLE `Ident` characteristic. Verbatim (not re-encoded) so both
+     * sides derive the same bytes regardless of map-key ordering.
+     */
+    fun eDeviceKeyBytes(engagement: ByteArray): ByteArray {
+        val map = CborDecoder.decode(engagement) as? Cbor.CborMap ?: throw ProximityException("DeviceEngagement must be a map")
+        val security = map.entries.firstOrNull { (k, _) -> (k as? Cbor.UInt)?.value == 1uL }?.second as? Cbor.Array
+            ?: throw ProximityException("missing Security")
+        val bytes = security.items.getOrNull(1) as? Cbor.Tagged ?: throw ProximityException("missing EDeviceKeyBytes")
+        return CborEncoder.encode(bytes)
+    }
+
+    /**
+     * ISO/IEC 18013-5 §8.3.3.1.1.4 BLE `Ident` characteristic value:
+     * `HKDF-SHA256(IKM = EDeviceKeyBytes, salt = ∅, info = "BLEIdent", L = 16)`. In central client mode the
+     * mdoc **reader** (GATT server) exposes it on characteristic `…00000008`; the mdoc (GATT client) reads and
+     * verifies it to confirm it connected to the reader that scanned this engagement, and terminates on mismatch.
+     */
+    fun bleIdent(eDeviceKeyBytes: ByteArray): ByteArray =
+        Hkdf.deriveSha256(eDeviceKeyBytes, ByteArray(0), "BLEIdent".encodeToByteArray(), 16)
 }

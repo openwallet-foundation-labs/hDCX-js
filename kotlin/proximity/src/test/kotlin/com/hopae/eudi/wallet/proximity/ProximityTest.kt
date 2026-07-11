@@ -20,6 +20,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 
 class ProximityTest {
 
@@ -38,6 +39,23 @@ class ProximityTest {
             hex("3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"),
             okm,
         )
+    }
+
+    /** §8.3.3.1.1.4: the BLE Ident = HKDF-SHA256(EDeviceKeyBytes, ∅, "BLEIdent", 16), same on both sides. */
+    @Test
+    fun bleIdentDerivation() {
+        val eDevice = EphemeralKeyPair.generate()
+        val engagement = DeviceEngagement.qr(eDevice.publicKey)
+
+        val ikm = DeviceEngagement.eDeviceKeyBytes(engagement)
+        val ident = DeviceEngagement.bleIdent(ikm)
+        assertEquals(16, ident.size)
+        assertContentEquals(Hkdf.deriveSha256(ikm, ByteArray(0), "BLEIdent".encodeToByteArray(), 16), ident)
+        // both sides derive the same value from the same engagement
+        assertContentEquals(ident, DeviceEngagement.bleIdent(DeviceEngagement.eDeviceKeyBytes(engagement)))
+        // a different engagement (different EDeviceKey) yields a different Ident
+        val other = DeviceEngagement.qr(EphemeralKeyPair.generate().publicKey)
+        assertFalse(ident.contentEquals(DeviceEngagement.bleIdent(DeviceEngagement.eDeviceKeyBytes(other))))
     }
 
     private fun transcriptBytes(eDevice: EphemeralKeyPair, eReader: EphemeralKeyPair): ByteArray {

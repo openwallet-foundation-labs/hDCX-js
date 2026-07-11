@@ -17,10 +17,12 @@ import android.content.Context
 import android.os.Build
 import android.os.ParcelUuid
 import com.hopae.eudi.demo.LogStore
+import com.hopae.eudi.wallet.proximity.DeviceEngagement
 import com.hopae.eudi.wallet.spi.NfcCarrier
 import com.hopae.eudi.wallet.spi.ProximityTransport
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withTimeout
 import java.io.ByteArrayOutputStream
 import java.util.UUID
 import kotlin.math.min
@@ -36,6 +38,10 @@ class BleGattServerTransport(
     private val serviceUuid: UUID,
     private val uuids: BleModeUuids = Ble.PERIPHERAL_SERVER,
     private val advertisedMethods: List<ByteArray> = emptyList(),
+    /** ISO 18013-5 §8.3.3.1.1.4: when set (raw `EDeviceKeyBytes`), expose the Ident characteristic — reader in central client mode. */
+    private val identKey: ByteArray? = null,
+    /** Upper bound on a single [receive] and on waiting for the peer in [send]; guards against a stalled peer. */
+    private val receiveTimeoutMs: Long = 60_000,
 ) : ProximityTransport {
     private val manager = context.getSystemService(BluetoothManager::class.java)
 
@@ -59,6 +65,8 @@ class BleGattServerTransport(
         service.addCharacteristic(stateChar)
         service.addCharacteristic(c2s)
         service.addCharacteristic(s2cChar)
+        // §8.3.3.1.1.4: the reader (central client mode) exposes Ident so the mdoc can confirm the connection.
+        if (identKey != null) service.addCharacteristic(char(Ble.IDENT, BluetoothGattCharacteristic.PROPERTY_READ))
 
         gattServer = manager.openGattServer(context, callback)
         gattServer!!.addService(service)
@@ -77,10 +85,11 @@ class BleGattServerTransport(
 
     override fun nfcCarrier(): NfcCarrier = NfcCarrier(Ble.uuidToBytes(serviceUuid), peripheralServerMode = uuids.state == Ble.PERIPHERAL_SERVER.state)
 
-    override suspend fun receive(): ByteArray = incoming.receive()
+    override suspend fun receive(): ByteArray = withTimeout(receiveTimeoutMs) { incoming.receive() }
 
     override suspend fun send(message: ByteArray) {
-        connected.await() // in central client mode the reader sends first, before the holder has connected
+        // in central client mode the reader sends first, before the holder has connected — bounded so we don't wait forever
+        withTimeout(receiveTimeoutMs) { connected.await() }
         val maxChunk = min(512, mtu - 3) - 1 // room for the 0x00/0x01 prefix
         var offset = 0
         while (offset < message.size) {
@@ -111,7 +120,7 @@ class BleGattServerTransport(
         val signal = CompletableDeferred<Boolean>()
         notifySent = signal
         notifyNoWait(characteristic, value)
-        signal.await()
+        withTimeout(10_000) { signal.await() } // bounded: don't hang if onNotificationSent never fires
     }
 
     private fun notifyNoWait(characteristic: BluetoothGattCharacteristic, value: ByteArray) {
@@ -160,6 +169,20 @@ class BleGattServerTransport(
                         incoming.trySend(message)
                     }
                 }
+            }
+        }
+
+        override fun onCharacteristicReadRequest(
+            device: BluetoothDevice, requestId: Int, offset: Int, characteristic: BluetoothGattCharacteristic,
+        ) {
+            // §8.3.3.1.1.4: answer an Ident read with HKDF(EDeviceKeyBytes, "BLEIdent"); reject other reads.
+            if (characteristic.uuid == Ble.IDENT && identKey != null) {
+                val ident = DeviceEngagement.bleIdent(identKey)
+                val slice = if (offset < ident.size) ident.copyOfRange(offset, ident.size) else ByteArray(0)
+                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, slice)
+                LogStore.log("BLE Ident served (§8.3.3.1.1.4)")
+            } else {
+                gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_READ_NOT_PERMITTED, 0, null)
             }
         }
 
