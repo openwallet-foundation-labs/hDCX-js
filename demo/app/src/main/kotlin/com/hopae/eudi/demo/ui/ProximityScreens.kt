@@ -42,11 +42,12 @@ import com.google.zxing.BarcodeFormat
 import com.hopae.eudi.demo.LogStore
 import com.hopae.eudi.demo.PortraitCaptureActivity
 import android.app.Activity
-import com.hopae.eudi.demo.ble.Ble
-import com.hopae.eudi.demo.ble.BleGattClientTransport
-import com.hopae.eudi.demo.ble.BleGattServerTransport
-import com.hopae.eudi.demo.nfc.NfcEngagementService
-import com.hopae.eudi.demo.nfc.NfcReader
+import com.hopae.eudi.demo.adapters.LogWalletLogger
+import com.hopae.eudi.wallet.android.proximity.Ble
+import com.hopae.eudi.wallet.android.proximity.BleGattClientTransport
+import com.hopae.eudi.wallet.android.proximity.BleGattServerTransport
+import com.hopae.eudi.wallet.android.proximity.NfcEngagementService
+import com.hopae.eudi.wallet.android.proximity.NfcReader
 import com.hopae.eudi.wallet.proximity.MdocNfcEngagement
 import com.hopae.eudi.wallet.proximity.DeviceEngagement
 import com.hopae.eudi.wallet.spi.ProximityTransport
@@ -111,8 +112,8 @@ fun ProximityHolderDialog(wallet: Wallet, onClose: () -> Unit) {
         val scope = CoroutineScope(Dispatchers.Main)
         // Peripheral server mode / NFC → we're the GATT server. Central client mode → we're the GATT client (the
         // reader advertises our UUID); scan for it in parallel. NFC delivers the engagement via HCE (no QR).
-        val server = if (central) null else BleGattServerTransport(context, uuid, Ble.PERIPHERAL_SERVER, if (nfc) emptyList() else listOf(DeviceEngagement.bleRetrievalMethod(peripheralServerUuid = uuidBytes)))
-        val client = if (central) BleGattClientTransport(context, uuid, Ble.CENTRAL_CLIENT, listOf(DeviceEngagement.bleRetrievalMethod(centralClientUuid = uuidBytes))) else null
+        val server = if (central) null else BleGattServerTransport(context, uuid, Ble.PERIPHERAL_SERVER, if (nfc) emptyList() else listOf(DeviceEngagement.bleRetrievalMethod(peripheralServerUuid = uuidBytes)), logger = LogWalletLogger())
+        val client = if (central) BleGattClientTransport(context, uuid, Ble.CENTRAL_CLIENT, listOf(DeviceEngagement.bleRetrievalMethod(centralClientUuid = uuidBytes)), logger = LogWalletLogger()) else null
         val transport: ProximityTransport = server ?: client!!
         server?.start()
         if (client != null) scope.launch { runCatching { client.connect() } }
@@ -228,9 +229,9 @@ fun ProximityReaderScreen(wallet: Wallet) {
                 val peripheral = ble.peripheralServerUuid
                 val central = ble.centralClientUuid
                 val transport: ProximityTransport = when {
-                    peripheral != null -> BleGattClientTransport(context, Ble.bytesToUuid(peripheral), Ble.PERIPHERAL_SERVER).also { it.connect() }
+                    peripheral != null -> BleGattClientTransport(context, Ble.bytesToUuid(peripheral), Ble.PERIPHERAL_SERVER, logger = LogWalletLogger()).also { it.connect() }
                     // Central client mode: we're the GATT server → expose the Ident characteristic (§8.3.3.1.1.4).
-                    central != null -> BleGattServerTransport(context, Ble.bytesToUuid(central), Ble.CENTRAL_CLIENT, identKey = DeviceEngagement.eDeviceKeyBytes(engagement)).also { it.start() }
+                    central != null -> BleGattServerTransport(context, Ble.bytesToUuid(central), Ble.CENTRAL_CLIENT, identKey = DeviceEngagement.eDeviceKeyBytes(engagement), logger = LogWalletLogger()).also { it.start() }
                     else -> { status = "❌ Engagement carries no BLE UUID"; return@launch }
                 }
                 status = "Requesting documents…"
@@ -274,7 +275,7 @@ fun ProximityReaderScreen(wallet: Wallet) {
                     val eng = MdocNfcEngagement.parseHandoverSelect(ndef) ?: run { status = "❌ Not an mdoc NFC tag"; return@launch }
                     status = "Connecting over BLE…"
                     val uuids = if (eng.peripheralServerMode) Ble.PERIPHERAL_SERVER else Ble.CENTRAL_CLIENT
-                    val transport = BleGattClientTransport(context, Ble.bytesToUuid(eng.serviceUuid), uuids).also { it.connect() }
+                    val transport = BleGattClientTransport(context, Ble.bytesToUuid(eng.serviceUuid), uuids, logger = LogWalletLogger()).also { it.connect() }
                     status = "Requesting documents…"
                     val docs = wallet.reader.read(transport, eng.deviceEngagement, readerRequest(), handoverNdef = ndef)
                     results = docs

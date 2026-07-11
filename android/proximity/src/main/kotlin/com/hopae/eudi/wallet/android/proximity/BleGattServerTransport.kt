@@ -1,4 +1,4 @@
-package com.hopae.eudi.demo.ble
+package com.hopae.eudi.wallet.android.proximity
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
@@ -16,10 +16,10 @@ import android.bluetooth.le.AdvertiseSettings
 import android.content.Context
 import android.os.Build
 import android.os.ParcelUuid
-import com.hopae.eudi.demo.LogStore
 import com.hopae.eudi.wallet.proximity.DeviceEngagement
 import com.hopae.eudi.wallet.spi.NfcCarrier
 import com.hopae.eudi.wallet.spi.ProximityTransport
+import com.hopae.eudi.wallet.spi.WalletLogger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withTimeout
@@ -42,6 +42,8 @@ class BleGattServerTransport(
     private val identKey: ByteArray? = null,
     /** Upper bound on a single [receive] and on waiting for the peer in [send]; guards against a stalled peer. */
     private val receiveTimeoutMs: Long = 60_000,
+    /** Optional trace sink (null = no logging). */
+    private val logger: WalletLogger? = null,
 ) : ProximityTransport {
     private val manager = context.getSystemService(BluetoothManager::class.java)
 
@@ -78,7 +80,7 @@ class BleGattServerTransport(
         val data = AdvertiseData.Builder().setIncludeTxPowerLevel(false)
             .addServiceUuid(ParcelUuid(serviceUuid)).build()
         manager.adapter.bluetoothLeAdvertiser?.startAdvertising(settings, data, advertiseCallback)
-        LogStore.log("BLE server advertising · service=$serviceUuid")
+        logger?.log(WalletLogger.Level.Debug,"BLE server advertising · service=$serviceUuid")
     }
 
     override fun retrievalMethods(): List<ByteArray> = advertisedMethods
@@ -101,7 +103,7 @@ class BleGattServerTransport(
             notify(s2cChar!!, chunk)
             offset += size
         }
-        LogStore.log("BLE server sent ${message.size}B")
+        logger?.log(WalletLogger.Level.Debug,"BLE server sent ${message.size}B")
     }
 
     override suspend fun close() = stop()
@@ -158,7 +160,7 @@ class BleGattServerTransport(
                     this@BleGattServerTransport.device = device
                     if (!connected.isCompleted) connected.complete(Unit)
                     runCatching { manager.adapter.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback) }
-                    LogStore.log("BLE server: peer connected")
+                    logger?.log(WalletLogger.Level.Debug,"BLE server: peer connected")
                 }
                 uuids.client2Server -> {
                     if (value.isEmpty()) return
@@ -180,7 +182,7 @@ class BleGattServerTransport(
                 val ident = DeviceEngagement.bleIdent(identKey)
                 val slice = if (offset < ident.size) ident.copyOfRange(offset, ident.size) else ByteArray(0)
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, slice)
-                LogStore.log("BLE Ident served (§8.3.3.1.1.4)")
+                logger?.log(WalletLogger.Level.Debug,"BLE Ident served (§8.3.3.1.1.4)")
             } else {
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_READ_NOT_PERMITTED, 0, null)
             }
@@ -199,6 +201,6 @@ class BleGattServerTransport(
     }
 
     private val advertiseCallback = object : AdvertiseCallback() {
-        override fun onStartFailure(errorCode: Int) { LogStore.log("❌ BLE advertise failed: $errorCode") }
+        override fun onStartFailure(errorCode: Int) { logger?.log(WalletLogger.Level.Debug,"❌ BLE advertise failed: $errorCode") }
     }
 }

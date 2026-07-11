@@ -1,4 +1,4 @@
-package com.hopae.eudi.demo.ble
+package com.hopae.eudi.wallet.android.proximity
 
 import java.nio.ByteBuffer
 import java.util.UUID

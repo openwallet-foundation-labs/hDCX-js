@@ -1,4 +1,4 @@
-package com.hopae.eudi.demo.nfc
+package com.hopae.eudi.wallet.android.proximity
 
 import android.app.Activity
 import android.nfc.NfcAdapter

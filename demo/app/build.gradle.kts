@@ -31,8 +31,9 @@ dependencies {
     // EUDI Wallet SDK (via composite build ../kotlin)
     implementation("com.hopae.eudi:wallet:0.0.1-SNAPSHOT")
     implementation("com.hopae.eudi:wallet-api:0.0.1-SNAPSHOT")
-    // Android platform adapters (SecureArea, storage, http, txlog) — via composite build ../android
-    implementation("com.hopae.eudi:core:0.0.1-SNAPSHOT")
+    // Android platform adapters — via composite build ../android (distinct group to avoid clashing with the SDK)
+    implementation("com.hopae.eudi.android:core:0.0.1-SNAPSHOT")
+    implementation("com.hopae.eudi.android:proximity:0.0.1-SNAPSHOT")
     // debug-grade software SecureArea + in-memory helpers
     implementation("com.hopae.eudi:testkit:0.0.1-SNAPSHOT")
 

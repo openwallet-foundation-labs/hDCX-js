@@ -1,4 +1,4 @@
-package com.hopae.eudi.demo.ble
+package com.hopae.eudi.wallet.android.proximity
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
@@ -16,9 +16,9 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.Build
 import android.os.ParcelUuid
-import com.hopae.eudi.demo.LogStore
 import com.hopae.eudi.wallet.proximity.DeviceEngagement
 import com.hopae.eudi.wallet.spi.ProximityTransport
+import com.hopae.eudi.wallet.spi.WalletLogger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
@@ -48,6 +48,8 @@ class BleGattClientTransport(
     private val connectAttempts: Int = 3,
     /** Backoff between connect attempts. */
     private val retryDelayMs: Long = 400,
+    /** Optional trace sink (BLE is stateful + flaky; on-device breadcrumbs help). Null = no logging. */
+    private val logger: WalletLogger? = null,
 ) : ProximityTransport {
     override fun retrievalMethods(): List<ByteArray> = advertisedMethods
 
@@ -96,7 +98,7 @@ class BleGattClientTransport(
             } catch (e: Throwable) {
                 lastError = e
             }
-            LogStore.log("BLE client connect attempt $attempt/$connectAttempts failed: ${lastError?.message}")
+            logger?.log(WalletLogger.Level.Debug,"BLE client connect attempt $attempt/$connectAttempts failed: ${lastError?.message}")
             cleanupGatt() // drop the half-open GATT + scanner; keep the message channel for the next attempt
             if (attempt < connectAttempts) delay(retryDelayMs)
         }
@@ -120,7 +122,7 @@ class BleGattClientTransport(
         enableNotify(s2cChar!!)
         verifyIdent(service) // §8.3.3.1.1.4 — no-op unless identKey was supplied
         writeChar(stateChar!!, byteArrayOf(0x01), BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) // STATE_START
-        LogStore.log("BLE client connected + subscribed (mtu=$mtu)")
+        logger?.log(WalletLogger.Level.Debug,"BLE client connected + subscribed (mtu=$mtu)")
     }
 
     /** Tears down the half-open GATT + scanner without closing the message channel (so a retry can reuse it). */
@@ -145,7 +147,7 @@ class BleGattClientTransport(
         val value = withTimeout(10_000) { read.await() }
         val expected = DeviceEngagement.bleIdent(key)
         if (!value.contentEquals(expected)) throw IllegalStateException("BLE Ident mismatch — wrong mdoc reader")
-        LogStore.log("BLE Ident verified")
+        logger?.log(WalletLogger.Level.Debug,"BLE Ident verified")
     }
 
     private suspend fun scan(): BluetoothDevice {
@@ -160,7 +162,7 @@ class BleGattClientTransport(
         val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(serviceUuid)).build()
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
         scanner.startScan(listOf(filter), settings, cb)
-        LogStore.log("BLE client scanning for $serviceUuid")
+        logger?.log(WalletLogger.Level.Debug,"BLE client scanning for $serviceUuid")
         return try {
             withTimeout(20_000) { found.await() }
         } finally {
@@ -180,7 +182,7 @@ class BleGattClientTransport(
             writeChar(c2sChar!!, chunk, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
             offset += size
         }
-        LogStore.log("BLE client sent ${message.size}B")
+        logger?.log(WalletLogger.Level.Debug,"BLE client sent ${message.size}B")
     }
 
     override suspend fun receive(): ByteArray = withTimeout(receiveTimeoutMs) { incoming.receive() }
@@ -268,7 +270,7 @@ class BleGattClientTransport(
                     }
                 }
                 uuids.state -> if (value.size == 1 && value[0].toInt() == 0x02) { // STATE_END
-                    LogStore.log("BLE client: peer ended session")
+                    logger?.log(WalletLogger.Level.Debug,"BLE client: peer ended session")
                 }
             }
         }
