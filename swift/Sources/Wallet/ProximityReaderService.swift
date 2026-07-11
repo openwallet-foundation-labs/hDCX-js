@@ -61,6 +61,11 @@ public struct ProximityReaderService: Sendable {
                 throw ProximityError.sessionFailed("mdoc returned status \(String(describing: frame.status)) without a DeviceResponse")
             }
             let deviceResponse = try enc.decrypt(encryptedResponse)
+
+            // §8.3.2.1.2.3: a non-zero DeviceResponse status means no documents were returned, with a reason.
+            // Surface it here — otherwise the verify/unverified fallback reports an empty list silently.
+            let responseStatus = try DeviceResponse.decode(deviceResponse).status
+            guard responseStatus == 0 else { throw ProximityError.sessionFailed("mdoc returned DeviceResponse status \(responseStatus)") }
             return try await verify(reader, deviceResponse, transcript, eReader, transcriptBytes)
         }
     }

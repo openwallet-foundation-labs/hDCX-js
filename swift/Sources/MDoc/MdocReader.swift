@@ -84,10 +84,14 @@ public struct MdocReader {
         sessionTranscript: Cbor,
         emacKey: ((EcPublicKey) throws -> [UInt8])? = nil
     ) async throws -> [VerifiedDocument] {
+        let response = try DeviceResponse.decode(deviceResponse)
+        // §8.3.2.1.2.3 Table 8: a non-zero status means the mdoc returned no documents, with a reason
+        // (10 general / 11 CBOR-decode / 12 CBOR-validation). Surface it rather than reporting an empty list.
+        guard response.status == 0 else { throw MdocError("mdoc returned DeviceResponse status \(response.status)") }
         guard let trust = issuerTrust else { throw MdocError("verifyDeviceResponse requires an issuer trust") }
         let verifier = MdocVerifier(trust: trust, now: now)
         var out: [VerifiedDocument] = []
-        for doc in try DeviceResponse.decode(deviceResponse).documents {
+        for doc in response.documents {
             let verified = try await verifier.verify(doc.issuerSigned) // issuerAuth + digests + validity
             let deviceAuthentication = Cbor.array([.text("DeviceAuthentication"), sessionTranscript, .text(doc.docType), doc.deviceNameSpacesBytes])
             let deviceAuthBytes = try CborEncoder.encode(.tagged(tag24, .bytes(try CborEncoder.encode(deviceAuthentication))))

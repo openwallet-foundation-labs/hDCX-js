@@ -1,6 +1,7 @@
 package com.hopae.eudi.wallet.mdoc
 
 import com.hopae.eudi.wallet.cbor.Cbor
+import com.hopae.eudi.wallet.cbor.CborEncoder
 import com.hopae.eudi.wallet.cbor.cose.EcPublicKey
 import com.hopae.eudi.wallet.spi.KeySpec
 import com.hopae.eudi.wallet.spi.SecureAreaCoseSigner
@@ -71,6 +72,17 @@ class MdocReaderTest {
         assertEquals(Cbor.Text("Han"), verified.elements[namespace]!!["family_name"])
         assertEquals(Cbor.Text("Jongho"), verified.elements[namespace]!!["given_name"])
         assertTrue(verified.elements[namespace]!!["age_over_18"] == null) // not disclosed
+    }
+
+    /** §8.3.2.1.2.3 Table 8: a non-zero DeviceResponse status (mdoc returned no documents) is surfaced. */
+    @Test
+    fun nonZeroDeviceResponseStatusRejected(): Unit = runBlocking {
+        val response = CborEncoder.encode(
+            Cbor.CborMap(listOf(Cbor.Text("version") to Cbor.Text("1.0"), Cbor.Text("status") to Cbor.int(10))),
+        )
+        // No issuer trust needed — the status gate fires before the trust check.
+        val ex = assertFailsWith<MdocException> { MdocReader().verifyDeviceResponse(response, Cbor.Null) }
+        assertTrue(ex.message!!.contains("status 10"), "message names the status: ${ex.message}")
     }
 
     @Test

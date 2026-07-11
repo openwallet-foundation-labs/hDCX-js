@@ -77,9 +77,13 @@ class MdocReader(
          */
         emacKey: (suspend (EcPublicKey) -> ByteArray)? = null,
     ): List<VerifiedDocument> {
+        val response = DeviceResponse.decode(deviceResponse)
+        // §8.3.2.1.2.3 Table 8: a non-zero status means the mdoc returned no documents, with a reason
+        // (10 general / 11 CBOR-decode / 12 CBOR-validation). Surface it rather than reporting an empty list.
+        if (response.status != 0L) throw MdocException("mdoc returned DeviceResponse status ${response.status}")
         val trust = issuerTrust ?: throw MdocException("verifyDeviceResponse requires an issuer trust")
         val verifier = MdocVerifier(trust, now)
-        return DeviceResponse.decode(deviceResponse).documents.map { doc ->
+        return response.documents.map { doc ->
             val verified = verifier.verify(doc.issuerSigned) // issuerAuth + digests + validity
             val deviceAuthentication = Cbor.Array(listOf(Cbor.Text("DeviceAuthentication"), sessionTranscript, Cbor.Text(doc.docType), doc.deviceNameSpacesBytes))
             val deviceAuthBytes = CborEncoder.encode(Cbor.Tagged(TAG_ENCODED_CBOR, Cbor.Bytes(CborEncoder.encode(deviceAuthentication))))

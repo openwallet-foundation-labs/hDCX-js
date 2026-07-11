@@ -123,6 +123,18 @@ final class MdocReaderTests: XCTestCase {
         XCTAssertNil(verified.elements[namespace]?["age_over_18"]) // not disclosed
     }
 
+    /// §8.3.2.1.2.3 Table 8: a non-zero DeviceResponse status (mdoc returned no documents) is surfaced.
+    func testNonZeroDeviceResponseStatusRejected() async throws {
+        let response = try CborEncoder.encode(.map([(.text("version"), .text("1.0")), (.text("status"), .uint(10))]))
+        // No issuer trust needed — the status gate fires before the trust check.
+        do {
+            _ = try await MdocReader().verifyDeviceResponse(response, sessionTranscript: .null)
+            XCTFail("should reject a non-zero status")
+        } catch let e as MdocError {
+            XCTAssertTrue(e.description.contains("status 10"), "message names the status: \(e.description)")
+        }
+    }
+
     func testDeviceResponseFromWrongSessionRejected() async throws {
         let p = try await Party()
         let issuerSigned = try IssuerSigned.decode(try await mdoc(p))

@@ -62,6 +62,11 @@ class ProximityReaderService internal constructor(
                 ?: throw ProximityException("mdoc returned status ${frame.status} without a DeviceResponse")
             val deviceResponse = enc.decrypt(encryptedResponse)
 
+            // §8.3.2.1.2.3: a non-zero DeviceResponse status means no documents were returned, with a reason.
+            // Surface it here — otherwise the verify/unverified fallback below reports an empty list silently.
+            val responseStatus = DeviceResponse.decode(deviceResponse).status
+            if (responseStatus != 0L) throw ProximityException("mdoc returned DeviceResponse status $responseStatus")
+
             return try {
                 if (issuerTrust != null) {
                     // Verify deviceSignature or deviceMac (EMacKey via the reader's EReaderKey ↔ mdoc DeviceKey ECDH).
