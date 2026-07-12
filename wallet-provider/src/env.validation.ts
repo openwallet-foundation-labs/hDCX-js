@@ -29,6 +29,16 @@ class EnvironmentVariables {
   @IsString()
   PLAY_INTEGRITY_PACKAGE_NAME?: string;
 
+  /** Override the Android Key Attestation trust anchors (PEM bundle); default = pinned Google roots. */
+  @IsOptional()
+  @IsString()
+  ANDROID_ATTESTATION_ROOTS?: string;
+
+  /** Override the Android Key Attestation revocation status URL (default = Google's attestation/status). */
+  @IsOptional()
+  @IsString()
+  ANDROID_ATTESTATION_STATUS_URL?: string;
+
   /**
    * Google service-account key as a JSON *string* (not a file path) for Play Integrity decode.
    * Injected as a k8s secret; parsed and handed to google-auth-library at runtime. Omit to fall
