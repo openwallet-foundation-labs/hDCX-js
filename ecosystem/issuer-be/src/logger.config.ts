@@ -11,12 +11,7 @@ export function createLoggerConfig(config: ConfigService): Params {
   const isProd = config.get<string>('STAGE') === 'prod';
   const level = config.get<string>('LOG_LEVEL') ?? (isProd ? 'info' : 'debug');
 
-  const IGNORED = new Set([
-    '/eudi-issuer/health',
-    '/eudi-issuer/live',
-    '/eudi-issuer/ready',
-    '/eudi-issuer/metrics',
-  ]);
+  const IGNORED = new Set(['/health', '/live', '/ready', '/metrics']);
 
   return {
     pinoHttp: {

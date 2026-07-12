@@ -5,15 +5,8 @@ import { Histogram } from 'prom-client';
 
 export const HTTP_REQUEST_DURATION = 'http_request_duration_seconds';
 
-// Route templates (with the /eudi-issuer prefix) that must not be timed — health probes and the metrics
-// scrape would dominate the series.
-const EXCLUDED_ROUTES = new Set([
-  '/eudi-issuer/health',
-  '/eudi-issuer/live',
-  '/eudi-issuer/ready',
-  '/eudi-issuer/metrics',
-  '/metrics',
-]);
+// Route templates that must not be timed — health probes and the metrics scrape would dominate the series.
+const EXCLUDED_ROUTES = new Set(['/health', '/live', '/ready', '/metrics']);
 
 @Injectable()
 export class HttpMetricsInterceptor implements NestInterceptor {

@@ -25,13 +25,17 @@ async function bootstrap() {
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: false, transform: true }));
 
-  // Everything is served under /eudi-issuer (the Credential Issuer identifier is `${origin}/eudi-issuer`),
-  // EXCEPT the OpenID4VCI / OAuth metadata, which RFC 8414 places under the root `/.well-known/...` with the
-  // issuer path segment appended.
+  // VCI endpoints are served under /eudi-issuer (the Credential Issuer identifier is `${origin}/eudi-issuer`).
+  // Kept at the root: the OpenID4VCI / OAuth metadata (RFC 8414 places `.well-known/...` at the origin root
+  // with the issuer path segment appended) and the infra probes (health/live/ready) + metrics scrape.
   app.setGlobalPrefix('eudi-issuer', {
     exclude: [
       { path: '.well-known/openid-credential-issuer/eudi-issuer', method: RequestMethod.GET },
       { path: '.well-known/oauth-authorization-server/eudi-issuer', method: RequestMethod.GET },
+      { path: 'health', method: RequestMethod.GET },
+      { path: 'live', method: RequestMethod.GET },
+      { path: 'ready', method: RequestMethod.GET },
+      { path: 'metrics', method: RequestMethod.GET },
     ],
   });
 
