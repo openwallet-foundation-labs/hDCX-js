@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-12T09:11:04.512Z",
+  "generatedAt": "2026-07-12T11:02:35.291Z",
   "lists": [
     {
       "slug": "wallet-providers",
@@ -7,8 +7,8 @@
       "standard": "ETSI TS 119 602 · Annex E",
       "description": "Trusted wallet solution providers. Wallet-unit attestations (WUAs) chain to the certificate on this list.",
       "sequenceNumber": 1,
-      "issued": "2026-07-12T09:11:04.512Z",
-      "nextUpdate": "2027-01-12T09:11:04.512Z",
+      "issued": "2026-07-12T11:02:35.291Z",
+      "nextUpdate": "2027-01-12T11:02:35.291Z",
       "entities": [
         {
           "name": "Hopae S.A.",
@@ -38,8 +38,8 @@
       "standard": "ETSI TS 119 602 · EUDI ARF (PID Providers)",
       "description": "Providers of Person Identification Data (PID). Issued PIDs — SD-JWT VC and mdoc — chain to the certificate on this list.",
       "sequenceNumber": 1,
-      "issued": "2026-07-12T09:11:04.512Z",
-      "nextUpdate": "2027-01-12T09:11:04.512Z",
+      "issued": "2026-07-12T11:02:35.291Z",
+      "nextUpdate": "2027-01-12T11:02:35.291Z",
       "entities": [
         {
           "name": "Hopae S.A.",
@@ -70,8 +70,8 @@
       "standard": "ETSI TS 119 602 · EUDI ARF ((Q)EAA Providers)",
       "description": "Providers of (Qualified) Electronic Attestations of Attributes. The mDL (ISO/IEC 18013-5) issued here chains to the certificate on this list.",
       "sequenceNumber": 1,
-      "issued": "2026-07-12T09:11:04.512Z",
-      "nextUpdate": "2027-01-12T09:11:04.512Z",
+      "issued": "2026-07-12T11:02:35.291Z",
+      "nextUpdate": "2027-01-12T11:02:35.291Z",
       "entities": [
         {
           "name": "Hopae S.A.",
@@ -101,8 +101,8 @@
       "standard": "ETSI TS 119 602 · EUDI ARF (Registration)",
       "description": "Registrar of relying parties. Relying-party access certificates chain to the Registrar CA on this list.",
       "sequenceNumber": 1,
-      "issued": "2026-07-12T09:11:04.512Z",
-      "nextUpdate": "2027-01-12T09:11:04.512Z",
+      "issued": "2026-07-12T11:02:35.291Z",
+      "nextUpdate": "2027-01-12T11:02:35.291Z",
       "entities": [
         {
           "name": "Hopae Registrar",
