@@ -1,13 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { type JWK } from 'jose';
 import { KeystoreService, type RpProfile } from '../crypto/keystore.service';
 import { buildDcqlQuery, type RequestableKey } from './dcql';
+import { encClientMetadataJwk } from './enc-key';
 
 export interface BuiltRequest {
   /** The signed request object (compact JWS). */
   jwt: string;
   /** The nonce bound into the request. */
   nonce: string;
+}
+
+/** The per-transaction response-encryption key advertised in client_metadata. */
+export interface EncKeyInput {
+  publicJwk: JWK;
+  kid: string;
 }
 
 /**
@@ -41,25 +49,52 @@ export class RequestBuilderService {
         };
   }
 
-  /** The QR/request_uri channel: direct_post to `${base}/response/:id`. Signs with the given RP profile. */
-  async buildForQr(transactionId: string, keys: RequestableKey[], nonce: string, rp: RpProfile): Promise<BuiltRequest> {
+  /** The QR/request_uri channel: encrypted direct_post.jwt to `${base}/response/:id`. Signs with the RP profile. */
+  async buildForQr(
+    transactionId: string,
+    keys: RequestableKey[],
+    nonce: string,
+    rp: RpProfile,
+    enc: EncKeyInput,
+  ): Promise<BuiltRequest> {
     const payload = {
       ...this.commonClaims(keys, nonce, rp),
-      response_mode: 'direct_post',
+      response_mode: 'direct_post.jwt',
       response_uri: `${this.baseUrl}/response/${transactionId}`,
       state: transactionId,
+      client_metadata: this.clientMetadata(enc),
     };
     return { jwt: await this.keystore.signRequestObject(payload, rp), nonce };
   }
 
-  /** The Digital Credentials API channel: response returned inline; bound to the calling page origin. */
-  async buildForDcApi(keys: RequestableKey[], nonce: string, expectedOrigins: string[], rp: RpProfile): Promise<BuiltRequest> {
+  /** The Digital Credentials API channel: encrypted dc_api.jwt, returned inline; bound to the calling origin. */
+  async buildForDcApi(
+    keys: RequestableKey[],
+    nonce: string,
+    expectedOrigins: string[],
+    rp: RpProfile,
+    enc: EncKeyInput,
+  ): Promise<BuiltRequest> {
     const payload = {
       ...this.commonClaims(keys, nonce, rp),
-      response_mode: 'dc_api',
+      response_mode: 'dc_api.jwt',
       expected_origins: expectedOrigins,
+      client_metadata: this.clientMetadata(enc),
     };
     return { jwt: await this.keystore.signRequestObject(payload, rp), nonce };
+  }
+
+  /**
+   * `client_metadata` advertising the response-encryption key + parameters (HAIP mandates encrypted responses).
+   * The wallet encrypts to the `alg=ECDH-ES` JWK (matching its `kid`); `encrypted_response_enc_values_supported`
+   * selects A256GCM; `deviceauth_alg_values` offers the P-256 mdoc `deviceMac` alg (OpenID4VP App. B.2.2).
+   */
+  private clientMetadata(enc: EncKeyInput): Record<string, unknown> {
+    return {
+      jwks: { keys: [encClientMetadataJwk(enc.publicJwk, enc.kid)] },
+      encrypted_response_enc_values_supported: ['A256GCM'],
+      vp_formats_supported: { mso_mdoc: { deviceauth_alg_values: [-65537] } },
+    };
   }
 
   private commonClaims(keys: RequestableKey[], nonce: string, rp: RpProfile): Record<string, unknown> {

@@ -15,12 +15,19 @@ export interface PresentationSession {
   requested: string[];
   /** Delivery channel: `qr` (request_uri + direct_post) or `dc_api` (Digital Credentials API). */
   mode: 'qr' | 'dc_api';
+  /** Same-device flow: only then does the verifier return a `redirect_uri` + one-time response_code (HAIP). */
+  sameDevice: boolean;
   /** Which RP profile signed the request (its client_id binds the response / mdoc SessionTranscript). */
   rp: RpProfile;
   /** The signed request object (compact JWS) served at `/request/:id` or embedded for the DC API. */
   requestJwt: string;
   /** Web origins the DC API response may come from (dc_api mode only). */
   expectedOrigins?: string[];
+  /** Per-transaction ephemeral response-encryption key (ECDH-ES). The public JWK rode in client_metadata;
+   *  the private JWK decrypts the wallet's JWE response. `encKid` is the key id echoed in the JWE header. */
+  encPrivateJwk?: Record<string, unknown>;
+  encPublicJwk?: Record<string, unknown>;
+  encKid?: string;
   createdAt: number;
   /** The raw vp_token the wallet submitted (DCQL-keyed raw presentations), kept for the debug inspector. */
   submittedVpToken?: Record<string, unknown>;
@@ -81,6 +88,30 @@ export class SessionStore implements OnModuleDestroy {
       return undefined;
     }
     return e.session;
+  }
+
+  // --- one-time response_code -> transaction id (HAIP same-device redirect binding) ---
+  private readonly memRc = new Map<string, { id: string; exp: number }>();
+
+  /** Binds a fresh one-time response_code to a transaction (OpenID4VP §8.2 / HAIP same-device return). */
+  async bindResponseCode(code: string, transactionId: string): Promise<void> {
+    if (this.redis) {
+      await this.redis.set(`rc:${code}`, transactionId, 'EX', this.ttlSec);
+    } else {
+      this.memRc.set(code, { id: transactionId, exp: Date.now() + this.ttlSec * 1000 });
+    }
+  }
+
+  /** Resolves + consumes (single-use) a response_code to its transaction id, or undefined if unknown/expired. */
+  async resolveResponseCode(code: string): Promise<string | undefined> {
+    if (this.redis) {
+      const id = await this.redis.getdel(`rc:${code}`);
+      return id ?? undefined;
+    }
+    const e = this.memRc.get(code);
+    this.memRc.delete(code);
+    if (!e || e.exp < Date.now()) return undefined;
+    return e.id;
   }
 
   async onModuleDestroy() {

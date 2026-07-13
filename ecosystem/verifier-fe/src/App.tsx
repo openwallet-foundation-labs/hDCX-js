@@ -107,7 +107,9 @@ export default function App() {
         credentials: [...selected],
         mode,
         rp,
-        ...(mode === 'dc_api' ? { origins: [window.location.origin] } : {}),
+        // QR offers a same-device "open in wallet" deep link, so ask for the same-device redirect return
+        // (cross-device scans are covered by polling). DC API is inline — no redirect.
+        ...(mode === 'dc_api' ? { origins: [window.location.origin] } : { same_device: true }),
       };
       const res = await fetch(`${BE}/presentations`, {
         method: 'POST',
@@ -119,6 +121,28 @@ export default function App() {
     },
     [selected, rp],
   );
+
+  // Same-device return: the wallet redirected back here with a one-time response_code — exchange it for the result.
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get('response_code');
+    if (!code) return;
+    void (async () => {
+      try {
+        const r: ResultBody = await (
+          await fetch(`${BE}/presentations/exchange`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ response_code: code }),
+          })
+        ).json();
+        setPhase({ name: 'result', result: r });
+      } catch {
+        /* ignore — fall back to the landing */
+      } finally {
+        window.history.replaceState({}, '', window.location.pathname); // drop the code from the URL
+      }
+    })();
+  }, []);
 
   const poll = (id: string) => {
     stopPolling();
@@ -168,15 +192,14 @@ export default function App() {
       } as unknown);
       if (!resp) throw new Error('The wallet returned no response.');
 
-      // The wallet's OpenID4VP response (Authorization Response) — a JSON object or string carrying vp_token.
+      // The wallet's OpenID4VP DC API response: dc_api.jwt -> { response: <JWE> }; plain -> { vp_token }.
       const raw = (resp as { data?: unknown }).data;
-      const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      const vp_token = (data as { vp_token?: unknown })?.vp_token ?? data;
+      const data = (typeof raw === 'string' ? JSON.parse(raw) : raw) as Record<string, unknown>;
 
       await fetch(`${BE}/presentations/${created.transaction_id}/dc-api-response`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vp_token, origin: window.location.origin }),
+        body: JSON.stringify({ ...data, origin: window.location.origin }),
       });
       const r: ResultBody = await (await fetch(`${BE}/presentations/${created.transaction_id}`)).json();
       setPhase({ name: 'result', result: r });

@@ -30,6 +30,8 @@ export interface ResponseBinding {
   responseUri?: string;
   /** dc_api: the calling web origin. */
   origin?: string;
+  /** RFC 7638 thumbprint of the response-encryption key — bound into the mdoc handover for `*.jwt` responses. */
+  encThumbprint?: Uint8Array;
 }
 
 /**
@@ -111,9 +113,17 @@ export class VpTokenVerifierService {
 
     const sessionTranscript =
       binding.mode === 'dc_api'
-        ? await SessionTranscript.forOid4VpDcApi({ origin: binding.origin ?? '', nonce: binding.nonce }, mdocVerifyContext)
+        ? await SessionTranscript.forOid4VpDcApi(
+            { origin: binding.origin ?? '', nonce: binding.nonce, jwkThumbprint: binding.encThumbprint },
+            mdocVerifyContext,
+          )
         : await SessionTranscript.forOid4Vp(
-            { clientId: binding.clientId, nonce: binding.nonce, responseUri: binding.responseUri ?? '' },
+            {
+              clientId: binding.clientId,
+              nonce: binding.nonce,
+              responseUri: binding.responseUri ?? '',
+              jwkThumbprint: binding.encThumbprint,
+            },
             mdocVerifyContext,
           );
 

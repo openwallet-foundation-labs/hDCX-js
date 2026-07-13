@@ -36,8 +36,20 @@ export class VpController {
 
   @Post('presentations/:id/dc-api-response')
   @HttpCode(200)
-  async dcApiResponse(@Param('id') id: string, @Body() body: { vp_token?: unknown; origin?: string }) {
+  async dcApiResponse(@Param('id') id: string, @Body() body: { vp_token?: unknown; response?: string; origin?: string }) {
     return this.vp.submitDcApi(id, body ?? {});
+  }
+
+  /** Same-device return: the frontend (reopened via the redirect_uri) exchanges the one-time response_code. */
+  @Post('presentations/exchange')
+  @HttpCode(200)
+  async exchange(@Body() body: { response_code?: string }) {
+    if (!body?.response_code) throw new NotFoundException('missing response_code');
+    try {
+      return await this.vp.exchangeResponseCode(body.response_code);
+    } catch {
+      throw new NotFoundException('unknown or expired response_code');
+    }
   }
 
   @Get('presentations/:id')
