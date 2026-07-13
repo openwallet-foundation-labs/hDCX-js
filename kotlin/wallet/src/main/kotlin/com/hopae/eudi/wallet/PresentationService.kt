@@ -95,17 +95,16 @@ class PresentationService internal constructor(
         val session = PresentationSession(scope) {
             emit(PresentationState.ResolvingRequest)
             val resolved = resolve()
-            // Refuse a revoked RP registration cert (WRPRC) before any matching / consent. Only runs when
-            // the request actually carried a WRPRC (registration != null); absent → nothing to check.
-            catchingVp { checkRegistrationStatus(resolved) }
-            // Dataset-only path (no WRPRC): if the User opted in, confirm the RP's registration against the
-            // registrar's TS5 API (RPRC_18). Best-effort — a failure leaves the self-declared dataset unverified.
+            // Trust is informational, not a gate: surface the RP registration cert (WRPRC) revocation status
+            // (and, dataset-only + opt-in, confirm it against the registrar TS5 API) so the wallet shows it and
+            // the User decides — neither hard-fails the presentation.
+            val statusValid = checkRegistrationStatus(resolved)
             val registrarVerifiedCreds = resolveRegistrarApi(resolved)
 
             val envelopes = store.list().filter { it.lifecycle is EnvelopeLifecycle.Issued }
             val held = envelopes.mapNotNull { presentableFor(it, it.firstInstance()) }
             val matches = vp.match(resolved, held)
-            val request = buildRequest(resolved, matches, registrarVerifiedCreds)
+            val request = buildRequest(resolved, matches, registrarVerifiedCreds, statusValid)
 
             when (val selection = awaitDecision(request)) {
                 null -> {
@@ -164,6 +163,7 @@ class PresentationService internal constructor(
         resolved: ResolvedRequest,
         matches: DcqlMatchResult,
         registrarVerifiedCreds: List<RegisteredCredential>? = null,
+        statusValid: Boolean? = null,
     ): PresentationRequest {
         val required = matches.requiredQueryIds
         val queries = matches.candidatesByQuery.map { (queryId, candidates) ->
@@ -187,8 +187,8 @@ class PresentationService internal constructor(
                 purpose = r.purpose.map { PurposeText(it.lang, it.value) },
                 intermediarySub = r.intermediarySub,
                 intermediaryName = r.intermediaryName,
-                // Reaching here means any revoked WRPRC was already refused; validated iff a status client ran.
-                statusValid = if (r.status != null && registrarStatusClient != null) true else null,
+                // Token Status List result (surfaced, not enforced): true = valid, false = revoked/suspended, null = unchecked.
+                statusValid = statusValid,
                 attested = r.attested,
                 registrarVerified = r.attested || registrarVerifiedCreds != null,
                 registryURI = r.dataset?.registryURI,
@@ -207,20 +207,18 @@ class PresentationService internal constructor(
     }
 
     /**
-     * Refuses a revoked/suspended RP registration cert (WRPRC) via the Token Status List, when the request
-     * carried a WRPRC ([ResolvedRequest.verifier].registration) and a registrar status client is configured.
-     * A missing WRPRC or missing status client is a no-op — interop with verifiers that don't send one yet.
+     * The RP registration cert (WRPRC) Token Status List result, surfaced (not enforced) so the wallet can
+     * show a revoked/suspended verifier and let the User decide: true = valid, false = revoked/suspended (or
+     * the check failed), null = nothing to check (no WRPRC status, or no registrar status client). Runs only
+     * when the request carried a WRPRC and a registrar status client is configured.
      */
-    private suspend fun checkRegistrationStatus(resolved: ResolvedRequest) {
-        val status = resolved.verifier.registration?.status ?: return
-        val client = registrarStatusClient ?: return
-        val result = try {
-            client.check(JsonValue.Obj(listOf("status" to status)))
-        } catch (e: StatusListException) {
-            throw VpException.VerifierNotTrusted("WRPRC status list check failed: ${e.message}")
-        }
-        if (result != StatusListStatus.VALID) {
-            throw VpException.VerifierNotTrusted("WRPRC status is $result (revoked or suspended)")
+    private suspend fun checkRegistrationStatus(resolved: ResolvedRequest): Boolean? {
+        val status = resolved.verifier.registration?.status ?: return null
+        val client = registrarStatusClient ?: return null
+        return try {
+            client.check(JsonValue.Obj(listOf("status" to status))) == StatusListStatus.VALID
+        } catch (_: StatusListException) {
+            false // could not confirm the status → treat as not-valid, surfaced to the User (not a hard fail)
         }
     }
 

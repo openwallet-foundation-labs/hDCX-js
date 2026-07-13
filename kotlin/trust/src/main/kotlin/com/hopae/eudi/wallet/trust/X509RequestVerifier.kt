@@ -27,15 +27,15 @@ class X509RequestVerifier(
 
     override suspend fun verifyRequestObject(jws: Jws, clientId: String, scheme: String): VerifierInfo {
         val x5c = jws.x5c ?: throw VpException.VerifierNotTrusted("x509 request without x5c")
-        val chain = validator.validate(x5c) // throws if chain is not trusted
-        val leaf = chain.first()
+        val leaf = X509Support.parse(x5c.first()) // the request's signing cert — not yet trusted
 
+        // --- Authenticity (HARD fail) --- a request whose signature does not verify, or whose client_id does
+        // not identify this exact certificate, is forged / spoofed (not merely "untrusted") and is rejected.
         val alg = signingAlgorithmFromJwsName((jws.header["alg"] as? JsonValue.Str)?.value ?: "")
             ?: throw VpException.InvalidRequest("unsupported request alg")
         if (!jws.verify(X509Support.ecPublicKey(leaf), alg)) {
             throw VpException.VerifierNotTrusted("request signature invalid")
         }
-
         when (scheme) {
             "x509_san_dns" -> {
                 val expected = clientId.substringAfter("x509_san_dns:", clientId)
@@ -52,20 +52,32 @@ class X509RequestVerifier(
             else -> throw VpException.Unsupported("client_id scheme '$scheme' for x509 verification")
         }
 
-        // ETSI TS 119 472-2 §6.3: the RP puts its Registrar data in the request's `verifier_info` array —
-        // a `registrar_dataset` (self-declared, mandatory REQ-RO-02) and, if it holds one, a `registration_cert`
-        // (the registrar-sealed WRPRC). We build a registration only when registrar trust is configured
-        // (`wrprcVerifier != null`); an entirely absent `verifier_info` leaves registration null (interop with
-        // verifiers that carry no Registrar data).
+        // --- Trust (SOFT) --- whether the certificate chains to a trusted reader anchor. A failure is NOT an
+        // error: it surfaces as `trusted = false` so the wallet can show "not trusted" and let the User decide
+        // (ARF informed consent). Registration (WRPRC / registrar_dataset) is likewise best-effort — any problem
+        // yields no registration rather than failing the whole request.
+        val trusted = runCatching { validator.validate(x5c) }.isSuccess
+        val registration = runCatching { buildRegistration(jws, x5c) }.getOrNull()
+
+        return VerifierInfo(clientId, scheme, x5c, X509Support.commonName(leaf), trusted = trusted, registration = registration)
+    }
+
+    /**
+     * The RP's registration from the request's `verifier_info` array (ETSI TS 119 472-2 §6.3): the WRPRC
+     * (registrar-sealed, authoritative) when present, else the self-declared `registrar_dataset`. Only built
+     * when registrar trust is configured. Throws on a verification problem; the caller treats that as
+     * "no registration" (soft) so an untrusted/invalid registration does not block the presentation.
+     */
+    private suspend fun buildRegistration(jws: Jws, x5c: List<ByteArray>): RegistrationInfo? {
+        val verifier = wrprcVerifier ?: return null
         val (dataset, wrprc) = extractVerifierInfo(jws)
-        val registration = when {
-            wrprcVerifier == null -> null
+        return when {
             // Presence matrix (§2): a WRPRC without the mandatory dataset is malformed.
             wrprc != null && dataset == null ->
                 throw VpException.InvalidRequest("verifier_info carries a registration_cert but no registrar_dataset (REQ-RO-02)")
             wrprc != null -> {
                 // Both present → the WRPRC wins (registrar-attested, offline-verifiable); dataset is for display/log.
-                val verified = wrprcVerifier.verify(wrprc, x5c.first())
+                val verified = verifier.verify(wrprc, x5c.first())
                 RegistrationInfo(
                     subject = verified.subject,
                     entitlements = verified.entitlements,
@@ -93,8 +105,6 @@ class X509RequestVerifier(
             )
             else -> null
         }
-
-        return VerifierInfo(clientId, scheme, x5c, X509Support.commonName(leaf), trusted = true, registration = registration)
     }
 
     /**

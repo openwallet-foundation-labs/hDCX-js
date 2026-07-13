@@ -33,7 +33,7 @@ echo "== 4/5 token + credential exchange (Kotlin)"
     | grep -E 'credentials received|credential saved|PASSED|FAILED' )
 
 echo "== 5/5 verify captured PID via x5c leaf key (Kotlin)"
-( cd "$KOTLIN" && ./gradlew :trust:test --tests '*LiveTrustE2eTest.verifyRealPidWithChain' --console=plain --rerun-tasks 2>&1 \
+( cd "$KOTLIN" && EUDI_LIVE=x ./gradlew :trust:test --tests '*LiveTrustE2eTest.verifyRealPidWithChain' --console=plain --rerun-tasks 2>&1 \
     | grep -E 'REAL PID VERIFIED|vct:|given_name|family_name|birthdate|holder-bound|PASSED|FAILED' )
 
 echo "== done. credential at $TMP/eudi-credential.txt"

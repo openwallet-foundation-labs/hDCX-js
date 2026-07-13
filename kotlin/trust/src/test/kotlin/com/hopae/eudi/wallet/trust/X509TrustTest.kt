@@ -173,18 +173,45 @@ class X509TrustTest {
         assertEquals(listOf(listOf("org.iso.18013.5.1", "given_name")), reg.registeredCredentials.first().claims)
     }
 
-    /** Presence matrix (§2): a `registration_cert` without the mandatory `registrar_dataset` is malformed. */
+    /** A malformed `verifier_info` (registration_cert without the mandatory dataset) is best-effort: it yields
+     *  no registration rather than failing the request — the signature is still authentic and the chain trusted. */
     @Test
-    fun registrationCertWithoutDatasetRejected(): Unit = runBlocking {
+    fun registrationCertWithoutDatasetIgnored() = runBlocking {
         val ca = TestCerts.makeCa()
         val leaf = TestCerts.makeLeaf(ca, "Verifier", dnsName = "verifier.example.com")
         val validator = X509ChainValidator(TrustAnchors(listOf(ca.certificate)), at = validAt)
         val fakeCert = Base64Url.encode("not-a-real-wrprc".encodeToByteArray())
         val payload = """{"nonce":"n","verifier_info":[{"format":"registration_cert","data":"$fakeCert"}]}"""
         val jws = signedRequest(leaf, payload)
-        assertFailsWith<VpException.InvalidRequest> {
-            X509RequestVerifier(validator, registrarVerifier())
-                .verifyRequestObject(jws, "x509_san_dns:verifier.example.com", "x509_san_dns")
+        val info = X509RequestVerifier(validator, registrarVerifier())
+            .verifyRequestObject(jws, "x509_san_dns:verifier.example.com", "x509_san_dns")
+        assertTrue(info.trusted, "signature + chain are fine")
+        assertEquals(null, info.registration, "a registration_cert without the mandatory dataset → no registration (soft)")
+    }
+
+    /** Trust is informational: a request signed by a cert that does NOT chain to a trusted reader anchor still
+     *  resolves — with `trusted = false` — so the wallet can show "not trusted" and let the User decide. */
+    @Test
+    fun untrustedVerifierResolvesAsNotTrusted() = runBlocking {
+        val rogue = TestCerts.makeCa("Rogue CA")
+        val leaf = TestCerts.makeLeaf(rogue, "Verifier", dnsName = "verifier.example.com")
+        val validator = X509ChainValidator(TrustAnchors(listOf(TestCerts.makeCa("Real CA").certificate)), at = validAt)
+        val jws = signedRequest(leaf, """{"nonce":"n"}""")
+        val info = X509RequestVerifier(validator).verifyRequestObject(jws, "x509_san_dns:verifier.example.com", "x509_san_dns")
+        assertEquals(false, info.trusted, "an untrusted chain surfaces as trusted=false, not an error")
+        assertEquals("Verifier", info.commonName)
+    }
+
+    /** But authenticity is still enforced: a tampered signature is rejected even in the soft-trust model. */
+    @Test
+    fun tamperedSignatureStillRejected(): Unit = runBlocking {
+        val ca = TestCerts.makeCa()
+        val leaf = TestCerts.makeLeaf(ca, "Verifier", dnsName = "verifier.example.com")
+        val validator = X509ChainValidator(TrustAnchors(listOf(ca.certificate)), at = validAt)
+        val jws = signedRequest(leaf, """{"nonce":"n"}""")
+        val tampered = Jws(jws.header, jws.headerB64, Base64Url.encode("""{"nonce":"evil"}"""), jws.signature)
+        assertFailsWith<VpException.VerifierNotTrusted> {
+            X509RequestVerifier(validator).verifyRequestObject(tampered, "x509_san_dns:verifier.example.com", "x509_san_dns")
         }
     }
 
