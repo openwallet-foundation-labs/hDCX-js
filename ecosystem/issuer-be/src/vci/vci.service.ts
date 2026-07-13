@@ -34,9 +34,6 @@ interface AuthRequest {
   batch?: 1 | 3;
 }
 
-/** Max credentials issued from one (batched) credential request — one per proven key. */
-const MAX_BATCH = 3;
-
 /** A credential/deferred response the controller emits as JSON or, when encrypted, as `application/jwt`. */
 interface IssuerResponse {
   contentType: 'application/json' | 'application/jwt';
@@ -312,7 +309,7 @@ export class VciService {
     // Enforce this profile's policy (from the access token): request/response encryption + the batch_size cap.
     this.enforceEncryption(accessToken, req, wasEncrypted);
     const maxBatch = accessToken.max_batch === 3 ? 3 : 1;
-    const holderJwks = await this.verifyProofs(this.collectProofJwts(req), maxBatch, c.keyAttestationRequired !== false);
+    const holderJwks = await this.resolveHolderKeys(req, maxBatch, c.keyAttestationRequired !== false);
 
     // Deferred issuance: store the verified keys and hand back a transaction_id to redeem later.
     if (accessToken.deferred === true) {
@@ -365,29 +362,72 @@ export class VciService {
     this.logger.log(`notification ${id}: ${event}`); // credential_accepted | credential_failure | credential_deleted
   }
 
-  /** Collects the proof JWTs from either the single `proof` or the batch `proofs.jwt[]` request member. */
-  private collectProofJwts(body: Record<string, unknown>): string[] {
-    const single = (body.proof as { proof_type?: string; jwt?: string } | undefined)?.jwt;
-    if (single) return [single];
-    const many = (body.proofs as { jwt?: string[] } | undefined)?.jwt;
-    return Array.isArray(many) ? many.filter((j): j is string => typeof j === 'string') : [];
-  }
-
   /**
-   * Verifies every proof in a (possibly batched) request and returns the proven holder keys. All proofs in one
-   * request share a single c_nonce: it is validated on each and consumed (single-use) exactly once. When the
-   * requested credential config mandates it (`requireKeyAttestation`, default true), each key's Key Attestation
-   * (the WUA) is checked independently; otherwise a bare jwt proof (PoP only, no WSCD binding) is accepted.
+   * Resolves the holder keys to bind, honoring the two batch shapes (ETSI TS 119 472-3 §4.6 / OID4VCI §14.6):
+   *
+   *  • jwt proofs WITHOUT a key attestation → each `proofs.jwt[]` element binds its own signing key (PoP);
+   *    multiple allowed up to `maxBatch`. Rejected when the config mandates a WUA (`requireKeyAttestation`).
+   *  • jwt proof WITH a key attestation (WUA) → MUST be the only proof (ETSI CRED-REQ-4.6.1.2-01, blocks the
+   *    N×N shape); the bound keys come from the WUA's `attested_keys` (first `maxBatch`), and the proof must be
+   *    signed by the first attested key (CRED-REQ-PROC-4.6.2.1-02/-07).
+   *  • `attestation` proof (a WUA on its own, no PoP) → exactly one element; keys from `attested_keys`.
+   *
+   * The Credential Issuer determines the credential count (OID4VCI §14.6): we cap `attested_keys` to `maxBatch`
+   * and refuse duplicate keys (CRED-REQ-PROC-4.6.2.1-06).
    */
-  private async verifyProofs(proofJwts: string[], maxBatch: number = MAX_BATCH, requireKeyAttestation = true): Promise<JWK[]> {
-    if (!proofJwts.length) throw new OAuthError('invalid_proof', 'jwt proof required');
-    if (proofJwts.length > maxBatch) throw new OAuthError('invalid_credential_request', `this issuer profile allows at most ${maxBatch} credential(s) per request`);
+  private async resolveHolderKeys(req: Record<string, unknown>, maxBatch: number, requireKeyAttestation: boolean): Promise<JWK[]> {
+    const proof = req.proof as { proof_type?: string; jwt?: string; attestation?: string } | undefined;
+    const proofs = req.proofs as { jwt?: unknown; attestation?: unknown } | undefined;
+    const asStrings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
-    const verified = await Promise.all(proofJwts.map((jwt) => this.verifyProofSignature(jwt)));
+    const jwtProofs = proof?.proof_type === 'jwt' && proof.jwt ? [proof.jwt] : asStrings(proofs?.jwt);
+    const attProofs = proof?.proof_type === 'attestation' && proof.attestation ? [proof.attestation] : asStrings(proofs?.attestation);
+    if (jwtProofs.length && attProofs.length) throw new OAuthError('invalid_proof', 'send either jwt or attestation proofs, not both');
+
+    // (A) `attestation` proof type: a WUA on its own (no PoP). Exactly one element; its nonce IS the c_nonce.
+    if (attProofs.length) {
+      if (attProofs.length !== 1) throw new OAuthError('invalid_proof', 'the attestation proof array must contain exactly one element');
+      const { attestedKeys, nonce } = await this.keyAttestation.verifyAttestation(attProofs[0]);
+      if (!nonce) throw new OAuthError('invalid_proof', 'attestation nonce required');
+      await this.consumeNonce(nonce);
+      return this.capBatch(attestedKeys, maxBatch);
+    }
+
+    // (B) `jwt` proof type. Verify each PoP signature; all proofs share one c_nonce, consumed once.
+    if (!jwtProofs.length) throw new OAuthError('invalid_proof', 'jwt proof required');
+    const verified = await Promise.all(jwtProofs.map((jwt) => this.verifyProofSignature(jwt)));
     if (new Set(verified.map((v) => v.nonce)).size !== 1) throw new OAuthError('invalid_proof', 'all proofs must share one c_nonce');
     await this.consumeNonce(verified[0].nonce);
-    for (const v of verified) await this.keyAttestation.verify(v.header, v.holderJwk, v.nonce, requireKeyAttestation);
-    return verified.map((v) => v.holderJwk);
+
+    const withWua = verified.some((v) => typeof v.header['key_attestation'] === 'string');
+    if (withWua) {
+      // A key attestation carries the batch in its attested_keys → forbid N proofs each with a WUA (N×N).
+      if (jwtProofs.length !== 1) throw new OAuthError('invalid_proof', 'a jwt proof carrying a key_attestation must be the only proof (batch keys go in attested_keys)');
+      const v = verified[0];
+      const { attestedKeys } = await this.keyAttestation.verifyAttestation(v.header['key_attestation'] as string, v.nonce);
+      // ETSI CRED-REQ-PROC-4.6.2.1-02/-07: the proof is signed by the FIRST attested key.
+      if ((await calculateJwkThumbprint(v.holderJwk, 'sha256')) !== (await calculateJwkThumbprint(attestedKeys[0], 'sha256'))) {
+        throw new OAuthError('invalid_proof', 'the jwt proof must be signed by the first attested key');
+      }
+      return this.capBatch(attestedKeys, maxBatch);
+    }
+
+    // Bare jwt(s): each binds its own signing key. A WUA-required config refuses these.
+    if (requireKeyAttestation) throw new OAuthError('invalid_proof', 'key attestation required');
+    if (jwtProofs.length > maxBatch) throw new OAuthError('invalid_credential_request', `this issuer profile allows at most ${maxBatch} credential(s) per request`);
+    return this.assertDistinct(verified.map((v) => v.holderJwk));
+  }
+
+  /** Takes the first `maxBatch` attested keys (OID4VCI §14.6 lets the Issuer issue fewer) and refuses duplicates. */
+  private async capBatch(keys: JWK[], maxBatch: number): Promise<JWK[]> {
+    return this.assertDistinct(keys.slice(0, maxBatch));
+  }
+
+  /** Refuses duplicate holder keys — no two Credentials bound to the same key (ETSI CRED-REQ-PROC-4.6.2.1-06). */
+  private async assertDistinct(keys: JWK[]): Promise<JWK[]> {
+    const tps = await Promise.all(keys.map((k) => calculateJwkThumbprint(k, 'sha256')));
+    if (new Set(tps).size !== tps.length) throw new OAuthError('invalid_proof', 'duplicate holder key: each Credential must bind a distinct key');
+    return keys;
   }
 
   /** Verifies a single proof JWT's typ/jwk/signature and extracts the holder key, nonce, and header. */

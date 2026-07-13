@@ -138,16 +138,20 @@ export class MetadataService {
   }
 
   private configMetadata(c: CredentialConfig) {
-    // Advertise key_attestations_required only when this config mandates a WUA (default: true).
-    const jwt =
+    // Advertise key_attestations_required — and the standalone `attestation` proof type — only when this config
+    // mandates a WUA (default: true). A non-WUA config (e.g. the demo mDL) offers just the bare `jwt` proof type.
+    const proof_types_supported =
       c.keyAttestationRequired === false
-        ? JWT_PROOF_SIGNING
-        : { ...JWT_PROOF_SIGNING, key_attestations_required: KEY_ATTESTATIONS_REQUIRED };
+        ? { jwt: JWT_PROOF_SIGNING }
+        : {
+            jwt: { ...JWT_PROOF_SIGNING, key_attestations_required: KEY_ATTESTATIONS_REQUIRED },
+            attestation: { ...JWT_PROOF_SIGNING, key_attestations_required: KEY_ATTESTATIONS_REQUIRED },
+          };
     const common = {
       scope: c.scope,
       cryptographic_binding_methods_supported: c.format === 'mso_mdoc' ? ['cose_key'] : ['jwk'],
       credential_signing_alg_values_supported: ['ES256'],
-      proof_types_supported: { jwt },
+      proof_types_supported,
       display: [
         {
           name: c.display.name,
