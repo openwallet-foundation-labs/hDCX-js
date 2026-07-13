@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CREDENTIAL_CONFIGS, type CredentialConfig } from './credential-configs';
 import { IssuerJwtService } from '../jwt/issuer-jwt.service';
+import { RequestEncryptionService } from '../crypto/request-encryption.service';
 import { ISSUER_PROFILES, credentialIssuerId, type IssuerProfile } from './issuer-profiles';
 
 // HAIP §4.5.1 requires key attestations for high-assurance credentials.
@@ -27,6 +28,7 @@ export class MetadataService {
   constructor(
     private readonly config: ConfigService,
     private readonly issuerJwt: IssuerJwtService,
+    private readonly reqEnc: RequestEncryptionService,
   ) {}
 
   private get iss(): string {
@@ -122,6 +124,13 @@ export class MetadataService {
       // is the standard lever the wallet obeys — true on the `enc` profiles forces an encrypted response.
       credential_response_encryption: {
         alg_values_supported: ['ECDH-ES'],
+        enc_values_supported: ['A128GCM', 'A256GCM'],
+        encryption_required: profile.enc,
+      },
+      // Credential Request Encryption (OID4VCI §8.2 / §12.2). §8.2: the wallet MUST encrypt the request whenever
+      // it asks for an encrypted response — so this is required on the `enc` profiles (jwks = issuer key).
+      credential_request_encryption: {
+        jwks: [this.reqEnc.publicJwk()],
         enc_values_supported: ['A128GCM', 'A256GCM'],
         encryption_required: profile.enc,
       },

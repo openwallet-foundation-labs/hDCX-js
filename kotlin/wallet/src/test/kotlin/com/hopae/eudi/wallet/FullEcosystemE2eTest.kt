@@ -1,6 +1,8 @@
 package com.hopae.eudi.wallet
 
 import com.hopae.eudi.wallet.sdjwt.JsonValue
+import com.hopae.eudi.wallet.spi.CredentialPolicy
+import com.hopae.eudi.wallet.spi.KeyUse
 import com.hopae.eudi.wallet.spi.HttpMethod
 import com.hopae.eudi.wallet.spi.HttpRequest
 import com.hopae.eudi.wallet.spi.HttpResponse
@@ -97,6 +99,48 @@ class FullEcosystemE2eTest {
         val status = (result["status"] as? JsonValue.Str)?.value
         assertEquals("verified", status, "verifier result: ${result.serialize()}")
         println("[e2e] VERIFIED ✓  ${result.serialize()}")
+        wallet.close()
+    }
+
+    /**
+     * The issuer's `enc-batch` profile exercises the wallet honouring the offer/profile metadata: the offer's
+     * `credential_issuer` selects a profile whose metadata sets `encryption_required` + `batch_size:3`, and the
+     * pre-auth grant carries a `tx_code`. The wallet must send the tx_code at the token endpoint, encrypt the
+     * Credential Request (and JWE-decrypt the response), and request 3 credentials — one per proof key.
+     */
+    @Test
+    fun encryptedBatchTxCodeLoop() = runBlocking {
+        assumeTrue(env("EUDI_E2E", "") == "1", "set EUDI_E2E=1 to run the live full-ecosystem e2e")
+        val http = JdkHttp()
+
+        val soDer = pemToDer(String(http.get("$tlBase/scheme-operator.pem")))
+        val tl = TrustedListClient(http)
+        val issuerCAs = tl.fetchCACerts("$tlBase/pid-issuers.jades.json", soDer) + tl.fetchCACerts("$tlBase/attestation-issuers.jades.json", soDer)
+        val regCAs = tl.fetchCACerts("$tlBase/registrar.jades.json", soDer)
+        val wallet = Wallet.create(
+            WalletConfig(trust = TrustConfig(issuerAnchorsDer = issuerCAs, readerAnchorsDer = regCAs, registrarAnchorsDer = regCAs)),
+            WalletPorts(listOf(SoftwareSecureArea()), InMemoryStorageDriver(), http, transactionLogStore = InMemoryTransactionLogStore()),
+        )
+
+        // Offer with the encryption-required + batch(3) profile AND a transaction code.
+        val offerResp = json(http.post("$issuerBase/credential-offer/create", """{"credential_configuration_id":"org.iso.18013.5.1.mDL","encrypted":true,"batch_size":3,"tx_code":true}"""))
+        val pin = (offerResp["tx_code"] as JsonValue.Str).value
+        val offerJson = (offerResp["credential_offer"] as JsonValue.Obj).serialize()
+        val offerUri = "openid-credential-offer://?credential_offer=${URLEncoder.encode(offerJson, "UTF-8")}"
+        println("[e2e] enc-batch offer: credential_issuer=${((offerResp["credential_offer"] as JsonValue.Obj)["credential_issuer"] as JsonValue.Str).value} tx_code=$pin")
+
+        val offer = wallet.issuance.resolveOffer(offerUri)
+        assertTrue(offer.requiresTxCode, "offer should require a tx_code")
+
+        val session = wallet.issuance.start(
+            IssuanceRequest.fromOffer(offer, "org.iso.18013.5.1.mDL", txCode = pin, policy = CredentialPolicy(batchSize = 3, use = KeyUse.OneTime)),
+        )
+        val terminal = withTimeout(90_000) { session.state.first { it.isTerminal } }
+        assertTrue(terminal is IssuanceState.Completed, "issuance did not complete (encrypted/batch/tx_code): $terminal")
+
+        val issued = wallet.credentials.list().single().lifecycle as Lifecycle.Issued
+        assertEquals(3, issued.instances.remaining, "batchSize=3 + encrypted response → 3 decrypted instances")
+        println("[e2e] ENCRYPTED + BATCH(3) + TX_CODE ✓  instances=${issued.instances.remaining}")
         wallet.close()
     }
 

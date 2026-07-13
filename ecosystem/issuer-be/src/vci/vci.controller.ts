@@ -95,11 +95,12 @@ export class VciController {
   @Dpop('rs')
   @UseGuards(DpopGuard)
   async credential(
-    @Body() body: Record<string, unknown>,
+    @Body() body: Record<string, unknown> | string,
     @Req() req: { accessToken: Record<string, unknown> },
     @Res() reply: FastifyReply,
   ) {
-    // Response is JSON, or a compact JWE (`application/jwt`) when the request asked for encryption.
+    // Body is JSON, or a compact JWE string (`application/jwt`) when the request is encrypted (§8.2). Response
+    // is JSON, or a compact JWE when the wallet asked for an encrypted response.
     const { contentType, payload } = await this.vci.credential(body, req.accessToken);
     void reply.header('Cache-Control', 'no-store').type(contentType).send(payload);
   }
@@ -108,7 +109,7 @@ export class VciController {
   @Dpop('rs')
   @UseGuards(DpopGuard)
   async deferredCredential(
-    @Body() body: Record<string, unknown>,
+    @Body() body: Record<string, unknown> | string,
     @Req() req: { accessToken: Record<string, unknown> },
     @Res() reply: FastifyReply,
   ) {

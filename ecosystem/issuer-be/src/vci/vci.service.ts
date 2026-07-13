@@ -8,6 +8,7 @@ import { SdJwtService } from '../credentials/sd-jwt.service';
 import { MdocService } from '../credentials/mdoc.service';
 import { StatusListService } from '../status-list/status-list.service';
 import { KeyAttestationService } from '../attestation/key-attestation.service';
+import { RequestEncryptionService } from '../crypto/request-encryption.service';
 import type { AttestationResult } from '../attestation/wallet-attestation.guard';
 import { CREDENTIAL_CONFIGS, getConfig, getConfigByScope, type CredentialConfig, type Flow } from './credential-configs';
 import { allCredentialIssuerIds, credentialIssuerId, resolveProfile } from './issuer-profiles';
@@ -58,6 +59,7 @@ export class VciService {
     private readonly mdoc: MdocService,
     private readonly statusList: StatusListService,
     private readonly keyAttestation: KeyAttestationService,
+    private readonly reqEnc: RequestEncryptionService,
     private readonly config: ConfigService,
   ) {}
 
@@ -295,47 +297,62 @@ export class VciService {
    * Response encryption as a compact JWE when the request carries `credential_response_encryption`.
    * Returns a discriminated `{ contentType, payload }` so the controller can emit JSON or `application/jwt`.
    */
-  async credential(body: Record<string, unknown>, accessToken: Record<string, unknown>): Promise<IssuerResponse> {
+  async credential(body: Record<string, unknown> | string, accessToken: Record<string, unknown>): Promise<IssuerResponse> {
+    const { req, wasEncrypted } = await this.decryptRequest(body);
     const authorized = (accessToken.authorized_configs as string[] | undefined) ?? [];
     // OID4VCI: when the token response returned `credential_identifiers`, the wallet sends `credential_identifier`
     // (our identifiers == the config ids). Accept either that or `credential_configuration_id`.
     const configId =
-      (body.credential_identifier as string | undefined) ??
-      (body.credential_configuration_id as string | undefined) ??
+      (req.credential_identifier as string | undefined) ??
+      (req.credential_configuration_id as string | undefined) ??
       (authorized.length === 1 ? authorized[0] : undefined);
     if (!configId || !authorized.includes(configId)) throw new OAuthError('invalid_credential_request', 'credential_configuration_id not authorized');
     const c = getConfig(configId)!;
 
-    // Enforce this profile's policy (from the access token): encryption_required + the batch_size cap.
-    this.enforceEncryption(accessToken, body);
+    // Enforce this profile's policy (from the access token): request/response encryption + the batch_size cap.
+    this.enforceEncryption(accessToken, req, wasEncrypted);
     const maxBatch = accessToken.max_batch === 3 ? 3 : 1;
-    const holderJwks = await this.verifyProofs(this.collectProofJwts(body), maxBatch);
+    const holderJwks = await this.verifyProofs(this.collectProofJwts(req), maxBatch);
 
     // Deferred issuance: store the verified keys and hand back a transaction_id to redeem later.
     if (accessToken.deferred === true) {
       const transaction_id = rand(16);
       await this.store.set(`deferred:${transaction_id}`, { configId, holderJwks }, 600);
       this.logger.log(`deferring ${holderJwks.length}×${configId} as ${transaction_id}`);
-      return this.maybeEncrypt({ transaction_id, interval: 5 }, body);
+      return this.maybeEncrypt({ transaction_id, interval: 5 }, req);
     }
 
-    return this.maybeEncrypt(await this.issueBatch(c, holderJwks), body);
+    return this.maybeEncrypt(await this.issueBatch(c, holderJwks), req);
   }
 
   // ---- Deferred endpoint ------------------------------------------------------------------------------
-  async deferredCredential(body: Record<string, unknown>, accessToken: Record<string, unknown>): Promise<IssuerResponse> {
-    this.enforceEncryption(accessToken, body);
-    const txId = body.transaction_id as string | undefined;
+  async deferredCredential(body: Record<string, unknown> | string, accessToken: Record<string, unknown>): Promise<IssuerResponse> {
+    const { req, wasEncrypted } = await this.decryptRequest(body);
+    this.enforceEncryption(accessToken, req, wasEncrypted);
+    const txId = req.transaction_id as string | undefined;
     if (!txId) throw new OAuthError('invalid_transaction_id', 'transaction_id required');
     const pending = await this.store.getdel<{ configId: string; holderJwks: JWK[] }>(`deferred:${txId}`);
     if (!pending) throw new OAuthError('invalid_transaction_id', 'unknown or expired transaction_id');
-    return this.maybeEncrypt(await this.issueBatch(getConfig(pending.configId)!, pending.holderJwks), body);
+    return this.maybeEncrypt(await this.issueBatch(getConfig(pending.configId)!, pending.holderJwks), req);
   }
 
-  /** On an `encryption_required` profile, the request MUST carry `credential_response_encryption` (OID4VCI §8.3). */
-  private enforceEncryption(accessToken: Record<string, unknown>, body: Record<string, unknown>): void {
-    if (accessToken.require_encryption === true && !body.credential_response_encryption) {
-      throw new OAuthError('invalid_encryption_parameters', 'this issuer requires an encrypted Credential Response (credential_response_encryption)');
+  /** A Credential Request arrives as JSON, or as a compact JWE (`application/jwt`) — decrypt it (OID4VCI §8.2). */
+  private async decryptRequest(body: Record<string, unknown> | string): Promise<{ req: Record<string, unknown>; wasEncrypted: boolean }> {
+    if (typeof body === 'string') return { req: await this.reqEnc.decrypt(body), wasEncrypted: true };
+    return { req: body, wasEncrypted: false };
+  }
+
+  /**
+   * On an `encryption_required` profile (OID4VCI §8.2): the Credential Request MUST be encrypted (JWE) AND
+   * carry `credential_response_encryption` (the wallet's response key) — the latter can't travel in the clear.
+   */
+  private enforceEncryption(accessToken: Record<string, unknown>, req: Record<string, unknown>, wasEncrypted: boolean): void {
+    if (accessToken.require_encryption !== true) return;
+    if (!wasEncrypted) {
+      throw new OAuthError('invalid_encryption_parameters', 'this issuer requires an encrypted Credential Request (compact JWE, application/jwt)');
+    }
+    if (!req.credential_response_encryption) {
+      throw new OAuthError('invalid_encryption_parameters', 'an encrypted request must include credential_response_encryption (the response key)');
     }
   }
 
