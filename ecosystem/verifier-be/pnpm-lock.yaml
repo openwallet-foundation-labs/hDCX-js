@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@lukas.j.han/mdoc':
-        specifier: 0.5.11
-        version: 0.5.11
+        specifier: 0.6.0
+        version: 0.6.0
       '@nestjs/common':
         specifier: ^11.0.1
         version: 11.1.28(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -350,8 +350,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
-  '@lukas.j.han/mdoc@0.5.11':
-    resolution: {integrity: sha512-UVCrPjrSWUqPQ6I+qcmvwxvh64WIiLFYg2TAB+60QvSm9seLrZuCCXtOE+at6hcd+nug2fdG6bnRi7ltkCum4w==}
+  '@lukas.j.han/mdoc@0.6.0':
+    resolution: {integrity: sha512-CfKCQ/0jwX2EzgA4g/EORieH0//jkqs2feeVTLhBNVLr8km9LyRuKfAbYH8Gglc0wsE5T3aYuVAnOv4aLlUsOw==}
 
   '@lukeed/csprng@1.1.0':
     resolution: {integrity: sha512-Z7C/xXCiGWsg0KuKsHTKJxbWhpI3Vs5GwLfOean7MGyVFGqdRgBbAjOCh6u4bbjPc/8MJ2pZmK/0DLdCbivLDA==}
@@ -1926,7 +1926,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@lukas.j.han/mdoc@0.5.11': {}
+  '@lukas.j.han/mdoc@0.6.0': {}
 
   '@lukeed/csprng@1.1.0': {}
 

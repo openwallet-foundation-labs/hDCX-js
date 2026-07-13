@@ -75,7 +75,7 @@ export class VpTokenVerifierService {
       const claims =
         cred.format === 'dc+sd-jwt'
           ? await this.verifySdJwtVc(presentation, cred, allAnchors, binding)
-          : await this.verifyMdoc(presentation, cred, anchorsDer, binding);
+          : await this.verifyMdoc(presentation, cred, anchorsDer, allAnchors, binding);
 
       out.push({ queryId: cred.queryId, format: cred.format, type: cred.type, claims });
     }
@@ -121,7 +121,7 @@ export class VpTokenVerifierService {
    * Presented-credential revocation check (IETF Token Status List). Reads `status.status_list = { idx, uri }`
    * from the credential, fetches the `statuslist+jwt` (verified: x5c → a trusted issuer anchor, ES256, and
    * `sub == uri`), decodes the packed bit array (zlib DEFLATE, LSB-first), and rejects a non-valid (≠0) entry.
-   * A credential without a status reference (e.g. current mdoc) is accepted — there is nothing to check.
+   * Applies to both SD-JWT VC and mdoc; a credential without a status reference is accepted — nothing to check.
    */
   private async checkStatus(payload: { status?: unknown }, anchors: x509.X509Certificate[]): Promise<void> {
     const ref = (payload.status as { status_list?: { idx?: number; uri?: string } } | undefined)?.status_list;
@@ -151,6 +151,7 @@ export class VpTokenVerifierService {
     presentation: string,
     cred: RequestableCredential,
     trustedCertificates: Uint8Array[],
+    anchors: x509.X509Certificate[],
     binding: ResponseBinding,
   ): Promise<Record<string, unknown>> {
     const deviceResponse = DeviceResponse.decode(new Uint8Array(Buffer.from(presentation, 'base64url')));
@@ -178,6 +179,15 @@ export class VpTokenVerifierService {
 
     const doc = deviceResponse.documents?.find((d) => d.docType === cred.type) ?? deviceResponse.documents?.[0];
     if (!doc) throw new Error(`mdoc DeviceResponse has no document for docType '${cred.type}'`);
+
+    // Revocation: the MSO may carry a Token Status List reference (ISO/IEC 18013-5 `status.status_list`,
+    // @lukas.j.han/mdoc >= 0.6.0). Reuse the same TSL check as SD-JWT VC — a credential without one is accepted.
+    const statusList = doc.issuerSigned.issuerAuth.mobileSecurityObject.status?.statusList;
+    await this.checkStatus(
+      statusList ? { status: { status_list: { idx: statusList.idx, uri: statusList.uri } } } : {},
+      anchors,
+    );
+
     const claims = toPlainObject(doc.issuerSigned.getPrettyClaims(cred.namespace!)) as Record<string, unknown>;
     return this.pickClaims(claims, cred.claimNames);
   }
