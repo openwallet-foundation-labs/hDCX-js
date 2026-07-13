@@ -43,7 +43,7 @@ public struct IssuanceKeys {
     public let additionalProofKeys: [ProofKey]
     /// Per-issuance Key Attestation source over exactly these `proofKeys` (bound to the c_nonce). Set by the
     /// wallet when the issuer requires a key attestation; its `attested_keys` MUST be `proofKeys` in order, so
-    /// `attested_keys[0]` is `proofSigner`'s key (which signs the single jwt proof in the WUA-in-jwt shape).
+    /// `attested_keys[0]` is `proofSigner`'s key (which signs the single jwt proof in the key-attestation-in-jwt shape).
     public let keyAttestation: (any KeyAttestationSource)?
 
     public init(
@@ -448,10 +448,10 @@ public struct Openid4VciClient {
                 return .obj([("attestation", .arr([.str(try await s.attestation(cNonce: cNonce))]))])
             }
             // Shape 2: exactly one jwt proof — PoP by the first proof key — with the batch attestation in-header.
-            let wua = try await s.attestation(cNonce: cNonce)
+            let attestation = try await s.attestation(cNonce: cNonce)
             let proofSigner = KeyProofSigner(signer: keys.proofSigner, publicKey: keys.proofPublicKey, now: clock)
             let jwt = try await proofSigner.proofJwt(
-                credentialIssuer: issuerMeta.credentialIssuer, cNonce: cNonce, clientId: clientId, keyAttestation: wua)
+                credentialIssuer: issuerMeta.credentialIssuer, cNonce: cNonce, clientId: clientId, keyAttestation: attestation)
             return .obj([("jwt", .arr([.str(jwt)]))])
         }
 

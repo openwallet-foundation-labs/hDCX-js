@@ -33,7 +33,7 @@ class IssuanceKeys(
     /**
      * Per-issuance Key Attestation source over exactly these [proofKeys] (bound to the c_nonce). Set by the
      * wallet when the issuer requires a key attestation; its `attested_keys` MUST be [proofKeys] in order, so
-     * `attested_keys[0]` is [proofSigner]'s key (which signs the single jwt proof in the WUA-in-jwt shape).
+     * `attested_keys[0]` is [proofSigner]'s key (which signs the single jwt proof in the key-attestation-in-jwt shape).
      */
     val keyAttestation: KeyAttestationSource? = null,
 ) {

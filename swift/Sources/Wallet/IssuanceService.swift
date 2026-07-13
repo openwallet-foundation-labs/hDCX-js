@@ -23,7 +23,9 @@ public struct IssuanceService {
     private struct BuiltKeys { let keys: IssuanceKeys; let proofKeys: [KeyInfo]; let dpopKey: KeyInfo }
 
     /// A Key Attestation over exactly these `proofKeys`, resolved at request time with the fresh c_nonce, so
-    /// the Wallet Provider signs a WUA per credential request (attested_keys = proofKeys, nonce = c_nonce).
+    /// the Wallet Provider signs a key attestation per credential request (attested_keys = proofKeys,
+    /// nonce = c_nonce). This is the WP `/key-attestation`, NOT the Wallet Unit Attestation (WUA) used for
+    /// client auth (see AttestationClientAuth) — the two are distinct objects.
     private struct ProviderKeyAttestation: KeyAttestationSource {
         let provider: any WalletAttestationProvider
         let proofKeys: [KeyInfo]

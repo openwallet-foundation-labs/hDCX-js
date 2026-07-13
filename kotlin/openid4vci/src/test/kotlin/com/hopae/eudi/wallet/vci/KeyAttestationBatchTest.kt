@@ -52,7 +52,7 @@ class KeyAttestationBatchTest {
         val keys = IssuanceKeys(
             signer(k1), k1.publicKey, signer(dpopKey), dpopKey.publicKey,
             additionalProofKeys = listOf(ProofKey(signer(k2), k2.publicKey), ProofKey(signer(k3), k3.publicKey)),
-            keyAttestation = KeyAttestationSource { "eyJ.batch-wua.jwt" },
+            keyAttestation = KeyAttestationSource { "eyJ.batch-key-attestation.jwt" },
         )
         val client = Openid4VciClient(mock, rng(), clock = { now })
 
@@ -60,7 +60,7 @@ class KeyAttestationBatchTest {
         client.issueWithPreAuthorizedCode(offer, "eu.europa.ec.eudi.pid.1", keys, txCode = "1234")
 
         assertEquals(1, mock.seenProofCount, "the batch goes in attested_keys → exactly one jwt proof, not N")
-        assertEquals("eyJ.batch-wua.jwt", mock.seenKeyAttestation, "the batch attestation rides in that proof's header")
+        assertEquals("eyJ.batch-key-attestation.jwt", mock.seenKeyAttestation, "the batch attestation rides in that proof's header")
     }
 
     /** A config that mandates key attestation, with no attestation source available → the client refuses. */
