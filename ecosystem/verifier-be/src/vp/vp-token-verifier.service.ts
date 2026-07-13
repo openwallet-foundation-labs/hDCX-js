@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as x509 from '@peculiar/x509';
-import { importX509, exportJWK } from 'jose';
+import { inflateSync } from 'node:zlib';
+import { importX509, exportJWK, importJWK, jwtVerify } from 'jose';
 import { SDJwtInstance } from '@sd-jwt/core';
 import { generateSalt, digest, ES256 } from '@sd-jwt/crypto-nodejs';
 import type { KbVerifier, Verifier } from '@sd-jwt/types';
@@ -32,6 +33,17 @@ export interface ResponseBinding {
   origin?: string;
   /** RFC 7638 thumbprint of the response-encryption key — bound into the mdoc handover for `*.jwt` responses. */
   encThumbprint?: Uint8Array;
+}
+
+/** Reads the `bits`-wide status entry at `idx` from a base64url zlib-DEFLATE status list (LSB-first, IETF TSL §4). */
+function statusAt(lstB64url: string, bits: number, idx: number): number {
+  const bytes = inflateSync(Buffer.from(lstB64url, 'base64url'));
+  const entriesPerByte = 8 / bits;
+  const byteIndex = Math.floor(idx / entriesPerByte);
+  if (byteIndex >= bytes.length) return 0; // beyond the list → unlisted → valid
+  const shift = (idx % entriesPerByte) * bits;
+  const mask = (1 << bits) - 1;
+  return (bytes[byteIndex] >> shift) & mask;
 }
 
 /**
@@ -98,7 +110,39 @@ export class VpTokenVerifierService {
     if (aud !== binding.clientId) {
       throw new Error(`SD-JWT VC key-binding aud '${String(aud)}' != client_id '${binding.clientId}'`);
     }
+
+    // Revocation: refuse a credential whose Token Status List entry is not valid (IETF TSL).
+    await this.checkStatus(result.payload as { status?: unknown }, anchors);
+
     return this.pickClaims(result.payload as Record<string, unknown>, cred.claimNames);
+  }
+
+  /**
+   * Presented-credential revocation check (IETF Token Status List). Reads `status.status_list = { idx, uri }`
+   * from the credential, fetches the `statuslist+jwt` (verified: x5c → a trusted issuer anchor, ES256, and
+   * `sub == uri`), decodes the packed bit array (zlib DEFLATE, LSB-first), and rejects a non-valid (≠0) entry.
+   * A credential without a status reference (e.g. current mdoc) is accepted — there is nothing to check.
+   */
+  private async checkStatus(payload: { status?: unknown }, anchors: x509.X509Certificate[]): Promise<void> {
+    const ref = (payload.status as { status_list?: { idx?: number; uri?: string } } | undefined)?.status_list;
+    if (!ref?.uri || typeof ref.idx !== 'number') return;
+
+    const res = await fetch(ref.uri, { headers: { Accept: 'application/statuslist+jwt' }, signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error(`status list fetch failed: HTTP ${res.status}`);
+    const token = (await res.text()).trim();
+    const header = JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString()) as { x5c?: string[] };
+    if (!header.x5c?.length) throw new Error('status list token has no x5c');
+
+    const leafJwk = await this.verifyX5cChain(header.x5c, anchors);
+    const { payload: st } = await jwtVerify(token, await importJWK(leafJwk, 'ES256'));
+    if (typeof st.sub === 'string' && st.sub !== ref.uri) {
+      throw new Error(`status list token sub '${st.sub}' != referenced uri`);
+    }
+    const sl = st.status_list as { bits?: number; lst?: string } | undefined;
+    if (!sl?.lst || !sl.bits) throw new Error('status list token missing status_list.{bits,lst}');
+
+    const status = statusAt(sl.lst, sl.bits, ref.idx);
+    if (status !== 0) throw new Error(`credential is revoked/suspended (status list entry ${ref.idx} = ${status})`);
   }
 
   // --- mdoc (ISO 18013-5) ---------------------------------------------------
