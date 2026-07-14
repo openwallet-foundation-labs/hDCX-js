@@ -471,6 +471,8 @@ fun ProximityReaderScreen(wallet: Wallet) {
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf("Scan a wallet's QR or tap it over NFC to read its mdoc.") }
     var results by remember { mutableStateOf<List<VerifiedDocument>>(emptyList()) }
+    var nfcWaiting by remember { mutableStateOf(false) } // waiting for the NFC tap → show the pulse
+    var nfcJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var granted by remember { mutableStateOf(BLE_PERMISSIONS.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) }
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r -> granted = r.values.all { it } }
     // Reading needs Bluetooth actually on — not just permission granted — else the BLE scan silently times out.
@@ -525,10 +527,12 @@ fun ProximityReaderScreen(wallet: Wallet) {
 
     fun onNfc() {
         results = emptyList()
-        status = "Hold near the wallet (NFC)…"
-        scope.launch {
+        status = "Hold your phone to the wallet…"
+        nfcWaiting = true
+        nfcJob = scope.launch {
             try {
                 val handover = NfcReader.readHandover(context as Activity)
+                nfcWaiting = false // tap received — the NFC handover is done, the rest is BLE
                 val eng = MdocNfcEngagement.parseHandoverSelect(handover.handoverSelect) ?: run { status = "❌ Not an mdoc NFC tag"; return@launch }
                 status = if (handover.negotiated) "Connecting over BLE (negotiated)…" else "Connecting over BLE…"
                 val uuids = if (eng.peripheralServerMode) Ble.PERIPHERAL_SERVER else Ble.CENTRAL_CLIENT
@@ -541,8 +545,23 @@ fun ProximityReaderScreen(wallet: Wallet) {
             } catch (e: Throwable) {
                 status = "❌ ${e.message}"
                 LogStore.log("❌ Reader (NFC): ${e.message}")
+            } finally {
+                nfcWaiting = false
             }
         }
+    }
+    fun cancelNfc() { nfcJob?.cancel(); nfcWaiting = false; status = "Ready to read." }
+
+    if (nfcWaiting) {
+        Column(
+            Modifier.fillMaxWidth().padding(20.dp, 24.dp, 20.dp, 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            NfcPulse()
+            Text(status, style = MaterialTheme.typography.titleSmall, color = c.ink)
+            SecondaryButton("Cancel", onClick = { cancelNfc() })
+        }
+        return
     }
 
     Column(
