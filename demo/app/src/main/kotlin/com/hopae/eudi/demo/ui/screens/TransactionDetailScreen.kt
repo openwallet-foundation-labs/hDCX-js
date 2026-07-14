@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.hopae.eudi.demo.ui.components.absorbTouches
 import com.hopae.eudi.demo.ui.components.InfoRow
 import com.hopae.eudi.demo.ui.components.SectionLabel
 import com.hopae.eudi.demo.ui.components.TrustRow
@@ -57,7 +58,7 @@ fun TransactionDetailScreen(e: TransactionLogEntry, onBack: () -> Unit) {
         ?: if (present) "Presentation" else "Credential issued"
 
     Column(
-        Modifier.fillMaxSize().background(c.screen).verticalScroll(rememberScrollState())
+        Modifier.fillMaxSize().background(c.screen).absorbTouches().verticalScroll(rememberScrollState())
             .padding(start = 20.dp, end = 20.dp, top = topInset + 12.dp, bottom = bottomInset + 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {

@@ -51,6 +51,7 @@ import com.hopae.eudi.demo.ui.credFormatLabel
 import com.hopae.eudi.demo.ui.credIsMdl
 import com.hopae.eudi.demo.ui.credKicker
 import com.hopae.eudi.demo.ui.credTitle
+import com.hopae.eudi.demo.ui.components.absorbTouches
 import com.hopae.eudi.demo.ui.components.InfoRow
 import com.hopae.eudi.demo.ui.components.Pill
 import com.hopae.eudi.demo.ui.components.SectionLabel
@@ -79,7 +80,7 @@ fun DocumentDetailScreen(
     val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
     Column(
-        Modifier.fillMaxSize().background(c.screen).verticalScroll(rememberScrollState())
+        Modifier.fillMaxSize().background(c.screen).absorbTouches().verticalScroll(rememberScrollState())
             .padding(start = 20.dp, end = 20.dp, top = topInset + 12.dp, bottom = bottomInset + 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {

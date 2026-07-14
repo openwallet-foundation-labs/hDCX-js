@@ -2,6 +2,8 @@ package com.hopae.eudi.demo.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,17 +45,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.hopae.eudi.demo.LogStore
-import com.hopae.eudi.demo.ui.components.DocTile
+import com.hopae.eudi.demo.ui.components.absorbTouches
 import com.hopae.eudi.demo.ui.components.InfoRow
+import com.hopae.eudi.demo.ui.components.Pill
 import com.hopae.eudi.demo.ui.components.PrimaryButton
-import com.hopae.eudi.demo.ui.components.SecondaryButton
 import com.hopae.eudi.demo.ui.components.SectionLabel
+import com.hopae.eudi.demo.ui.components.TrustBadge
 import com.hopae.eudi.demo.ui.components.TrustRow
 import com.hopae.eudi.demo.ui.components.WalletCard
 import com.hopae.eudi.demo.ui.theme.DocGradients
 import com.hopae.eudi.demo.ui.theme.WalletTheme
 import com.hopae.eudi.wallet.Credential
 import com.hopae.eudi.wallet.CredentialOffer
+import com.hopae.eudi.wallet.OfferPreview
 import com.hopae.eudi.wallet.IssuanceRequest
 import com.hopae.eudi.wallet.IssuanceSession
 import com.hopae.eudi.wallet.IssuanceState
@@ -110,7 +115,7 @@ fun IssueScreen(
     val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
     Column(
-        Modifier.fillMaxSize().background(c.screen)
+        Modifier.fillMaxSize().background(c.screen).absorbTouches()
             .padding(start = 20.dp, end = 20.dp, top = topInset + 12.dp, bottom = bottomInset + 20.dp),
     ) {
         // header (hidden on the terminal screens which have their own centered layout)
@@ -130,7 +135,7 @@ fun IssueScreen(
         }
 
         when (step) {
-            IssueStep.Review -> ReviewStep(offer, configId, onContinue = {
+            IssueStep.Review -> ReviewStep(offer, wallet, onContinue = {
                 if (offer.requiresTxCode) step = IssueStep.TxCode else runIssuance(null)
             }, onCancel = onCancel)
             IssueStep.TxCode -> TxCodeStep(txCode, onChange = { txCode = it }, onSubmit = { runIssuance(txCode) })
@@ -142,37 +147,77 @@ fun IssueScreen(
 }
 
 @Composable
-private fun ReviewStep(offer: CredentialOffer, configId: String, onContinue: () -> Unit, onCancel: () -> Unit) {
+private fun ReviewStep(offer: CredentialOffer, wallet: Wallet, onContinue: () -> Unit, onCancel: () -> Unit) {
     val c = WalletTheme.colors
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        WalletCard {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
-                DocTile(glyphOf(configId), DocGradients.Pid)
-                Column(Modifier.weight(1f)) {
-                    Text(prettyConfig(configId), style = MaterialTheme.typography.titleSmall, color = c.ink)
-                    Text(hostOf(offer.credentialIssuer), style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
+    var preview by remember { mutableStateOf<OfferPreview?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    LaunchedEffect(offer) {
+        preview = runCatching { wallet.issuance.previewOffer(offer) }.getOrNull()
+        loading = false
+    }
+    val configId = offer.credentialConfigurationIds.firstOrNull() ?: ""
+    val primary = preview?.credentials?.firstOrNull()
+    val title = primary?.displayName ?: prettyConfig(configId)
+    val host = hostOf(offer.credentialIssuer)
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // The credential being added.
+        Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Brush.linearGradient(DocGradients.Pid)).padding(20.dp)) {
+            Column {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("NEW DOCUMENT", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.85f), modifier = Modifier.weight(1f))
+                    primary?.format?.takeIf { it.isNotBlank() }?.let { Pill(formatLabel(it), Color.White.copy(alpha = 0.12f), Color.White) }
                 }
+                Spacer(Modifier.height(22.dp))
+                Text(title, style = MaterialTheme.typography.titleMedium, color = Color.White)
+                Spacer(Modifier.height(3.dp))
+                Text(host, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.75f))
             }
         }
+
+        // Who's issuing it, and whether they're a registered issuer (trusted list) — resolved live.
         SectionLabel("Issuer")
-        WalletCard(padding = PaddingValues(0.dp)) {
-            InfoRow("Issuer", hostOf(offer.credentialIssuer))
-            InfoRow("Verification", "Against the EU trusted list")
+        WalletCard {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text(preview?.issuerDisplayName ?: host, style = MaterialTheme.typography.titleSmall, color = c.ink)
+                    Text(host, style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
+                }
+                if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = c.brand)
+                else TrustBadge(preview?.issuerRegistered == true, trustedText = "Registered", untrustedText = "Unverified")
+            }
         }
-        if (offer.credentialConfigurationIds.size > 1) {
-            SectionLabel("Credentials offered")
+        preview?.takeIf { !it.issuerRegistered && !loading }?.let {
+            Text(
+                "This issuer isn't on the EU trusted list. You can still add the document.",
+                style = MaterialTheme.typography.bodySmall, color = c.inkMuted,
+            )
+        }
+
+        // More than one credential offered → list them.
+        preview?.credentials?.takeIf { it.size > 1 }?.let { creds ->
+            SectionLabel("You'll receive")
             WalletCard(padding = PaddingValues(0.dp)) {
-                offer.credentialConfigurationIds.forEach { InfoRow(prettyConfig(it), "") }
+                creds.forEach { InfoRow(it.displayName ?: prettyConfig(it.configurationId), formatLabel(it.format)) }
             }
         }
         if (offer.requiresTxCode) {
             Text("This issuer will ask for a transaction code.", style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
         }
-        Spacer(Modifier.weight(1f))
+
+        Spacer(Modifier.height(4.dp))
         PrimaryButton("Continue", onContinue)
-        Spacer(Modifier.height(10.dp))
-        SecondaryButton("Cancel", onCancel, tint = c.danger)
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Text("Cancel", style = MaterialTheme.typography.bodyMedium, color = c.inkMuted, modifier = Modifier.clickable { onCancel() }.padding(10.dp))
+        }
     }
+}
+
+private fun formatLabel(format: String): String = when {
+    format.contains("sd-jwt", true) || format.contains("sd_jwt", true) -> "SD-JWT VC"
+    format.contains("mdoc", true) || format.contains("mso", true) -> "mdoc"
+    format.isBlank() -> "Credential"
+    else -> format
 }
 
 @Composable

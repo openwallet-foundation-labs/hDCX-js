@@ -4,6 +4,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +37,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hopae.eudi.demo.ui.theme.SectionLabelStyle
 import com.hopae.eudi.demo.ui.theme.WalletTheme
+
+/**
+ * Swallows taps on empty areas so a full-screen overlay (issue / document / transaction detail) doesn't leak
+ * touches through to the bottom navigation bar rendered behind it. Children with their own click handlers are
+ * hit-tested first, so buttons still work.
+ */
+@Composable
+fun Modifier.absorbTouches(): Modifier =
+    this.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
 
 /** Uppercase, letter-spaced section header used throughout the design (e.g. "DATA TO BE REQUESTED"). */
 @Composable
