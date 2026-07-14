@@ -1,5 +1,7 @@
 package com.hopae.eudi.demo.ui.screens
 
+import android.app.ActivityManager
+import android.content.Context
 import android.content.pm.PackageManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,11 +21,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,8 +46,7 @@ import com.hopae.eudi.demo.ui.theme.WalletTheme
 fun SettingsScreen(onOpenDebug: () -> Unit) {
     val c = WalletTheme.colors
     val context = LocalContext.current
-    var biometric by remember { mutableStateOf(true) }
-    var appLock by remember { mutableStateOf(true) }
+    var resetConfirm by remember { mutableStateOf(false) }
 
     var bleCentral by remember { mutableStateOf(ProximityPrefs.bleCentral(context)) }
     var nfcNegotiated by remember { mutableStateOf(ProximityPrefs.nfcNegotiated(context)) }
@@ -63,15 +64,6 @@ fun SettingsScreen(onOpenDebug: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         Text("Settings", style = MaterialTheme.typography.titleLarge, color = c.ink)
-
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SectionLabel("Security")
-            WalletCard(padding = PaddingValues(0.dp)) {
-                ToggleRow("Biometric unlock", biometric) { biometric = it }
-                Divider()
-                ToggleRow("Require app lock", appLock) { appLock = it }
-            }
-        }
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionLabel("Wallet")
@@ -105,9 +97,30 @@ fun SettingsScreen(onOpenDebug: () -> Unit) {
             SectionLabel("Developer")
             WalletCard(padding = PaddingValues(0.dp)) {
                 NavRow("Debug log", onOpenDebug)
+                Divider()
+                ActionRow("Reset wallet", c.danger) { resetConfirm = true }
             }
+            Text(
+                "Reset erases all credentials, activity, and your PIN — the wallet starts over from onboarding.",
+                style = MaterialTheme.typography.bodySmall, color = c.inkMuted,
+            )
         }
     }
+
+    if (resetConfirm) {
+        AlertDialog(
+            onDismissRequest = { resetConfirm = false },
+            title = { Text("Reset wallet?") },
+            text = { Text("This erases all credentials, transaction history, and your PIN. You'll set the wallet up again.") },
+            confirmButton = { TextButton(onClick = { resetConfirm = false; resetWallet(context) }) { Text("Reset", color = c.danger) } },
+            dismissButton = { TextButton(onClick = { resetConfirm = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+/** Factory-reset the demo wallet: clears all app data (credentials, activity, keys, PIN) and restarts. */
+private fun resetWallet(context: Context) {
+    (context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)?.clearApplicationUserData()
 }
 
 /** A labelled row with a 2+ option segmented control on the right, for a small enumerated setting. */
@@ -133,15 +146,11 @@ private fun ChoiceRow(label: String, options: List<String>, selected: Int, onSel
     }
 }
 
+/** A tappable text row (no chevron) — used for a destructive action tinted with the danger colour. */
 @Composable
-private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    val c = WalletTheme.colors
-    Row(Modifier.fillMaxWidth().padding(16.dp, 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.bodyLarge, color = c.ink, modifier = Modifier.weight(1f))
-        Switch(
-            checked = checked, onCheckedChange = onChange,
-            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = c.brand),
-        )
+private fun ActionRow(label: String, tint: Color, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable { onClick() }.padding(16.dp, 15.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodyLarge, color = tint)
     }
 }
 
