@@ -473,6 +473,9 @@ fun ProximityReaderScreen(wallet: Wallet) {
     var results by remember { mutableStateOf<List<VerifiedDocument>>(emptyList()) }
     var granted by remember { mutableStateOf(BLE_PERMISSIONS.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) }
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r -> granted = r.values.all { it } }
+    // Reading needs Bluetooth actually on — not just permission granted — else the BLE scan silently times out.
+    val btAdapter = remember { context.getSystemService(BluetoothManager::class.java)?.adapter }
+    val enableBtLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {}
 
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val content = result.contents ?: run { status = "Scan cancelled"; return@rememberLauncherForActivityResult }
@@ -504,8 +507,19 @@ fun ProximityReaderScreen(wallet: Wallet) {
     }
 
     val c = WalletTheme.colors
-    fun onNfc() {
+    // Gate an action on BLE permission + Bluetooth being on; prompt for whichever is missing (like the holder).
+    fun ensureReady(action: () -> Unit) {
         if (!granted) { permLauncher.launch(BLE_PERMISSIONS); return }
+        if (btAdapter == null) { status = "Bluetooth is unavailable on this device"; return }
+        if (!btAdapter.isEnabled) {
+            status = "Turn on Bluetooth to read"
+            AppLock.suppressResumeLock() // the enable-Bluetooth system activity shouldn't demand a re-unlock
+            enableBtLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
+            return
+        }
+        action()
+    }
+    fun onNfc() {
         results = emptyList()
         status = "Hold near the wallet (NFC)…"
         scope.launch {
@@ -540,17 +554,18 @@ fun ProximityReaderScreen(wallet: Wallet) {
             )
         }
         PrimaryButton("Scan holder's QR", onClick = {
-            if (!granted) { permLauncher.launch(BLE_PERMISSIONS); return@PrimaryButton }
-            AppLock.suppressResumeLock() // returning from the scanner shouldn't demand a re-unlock
-            scanLauncher.launch(ScanOptions().apply {
-                setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                setPrompt("Scan the wallet's proximity QR")
-                setBeepEnabled(false)
-                setOrientationLocked(false)
-                setCaptureActivity(PortraitCaptureActivity::class.java)
-            })
+            ensureReady {
+                AppLock.suppressResumeLock() // returning from the scanner shouldn't demand a re-unlock
+                scanLauncher.launch(ScanOptions().apply {
+                    setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                    setPrompt("Scan the wallet's proximity QR")
+                    setBeepEnabled(false)
+                    setOrientationLocked(false)
+                    setCaptureActivity(PortraitCaptureActivity::class.java)
+                })
+            }
         })
-        SecondaryButton("Tap over NFC", onClick = { onNfc() })
+        SecondaryButton("Tap over NFC", onClick = { ensureReady { onNfc() } })
 
         if (status.isNotBlank()) {
             val tint = when { status.startsWith("❌") -> c.danger; status.startsWith("✅") -> c.trust; else -> c.inkMuted }
