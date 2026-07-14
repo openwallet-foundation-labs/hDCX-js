@@ -130,15 +130,11 @@ private val BLE_PERMISSIONS: Array<String> = if (Build.VERSION.SDK_INT >= Build.
     arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE)
 else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
 
-/** What the reader requests — a broad mdoc set; the holder answers with whichever docType it holds. */
+/** What the reader requests — the PID (mdoc); the holder answers if it holds a matching mdoc credential. */
 private fun readerRequest() = listOf(
     RequestedDocument(
         "eu.europa.ec.eudi.pid.1",
         mapOf("eu.europa.ec.eudi.pid.1" to listOf("family_name", "given_name", "birth_date", "age_over_18", "nationality")),
-    ),
-    RequestedDocument(
-        "org.iso.18013.5.1.mDL",
-        mapOf("org.iso.18013.5.1" to listOf("family_name", "given_name", "birth_date", "document_number", "expiry_date")),
     ),
 )
 
