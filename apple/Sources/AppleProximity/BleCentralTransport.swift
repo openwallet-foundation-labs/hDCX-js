@@ -3,17 +3,18 @@ import Foundation
 import Proximity
 import WalletAPI
 
-/// ISO/IEC 18013-5 BLE **mdoc central client** transport (reader side) over CoreBluetooth — the iOS
-/// counterpart of android `BleGattClientTransport`. The reader scans for the holder's per-session service
-/// UUID (from the scanned QR DeviceEngagement), connects, subscribes to the state + server→client
-/// characteristics, and writes `0x01` to state to begin. `ProximityReaderService.read` then drives the
-/// exchange over `send`/`receive`.
+/// ISO/IEC 18013-5 BLE **GATT central** transport over CoreBluetooth. Used in two roles (identical
+/// plumbing; only the UUIDs / advertised engagement / Ident differ):
+/// - **reader, peripheral-server mode** — scans for and connects to the holder's advertised service.
+/// - **holder, central-client mode** — advertises its central-client UUID in the QR, then scans for and
+///   connects to the reader's service, verifying the reader's **Ident** (§8.3.3.1.1.4) matches its EDeviceKey.
 ///
-/// This implements the default **peripheral-server holder** pairing: the holder is the GATT peripheral,
-/// this reader is the central. All mutable state is confined to the manager's serial `queue`.
+/// Connection is lazy: the first `send`/`receive` scans + connects. All mutable state is confined to the
+/// manager's serial `queue`.
 public final class BleCentralTransport: NSObject, ProximityTransport, @unchecked Sendable {
     private let serviceUuid: CBUUID
-    private let uuids = Ble.peripheralServer // reader connects to the holder's peripheral-server service
+    private let uuids: Ble.ModeUuids
+    private let advertisedRetrievalUuid: [UInt8]? // central-client holder only: goes into the QR retrieval method
     private let log: (@Sendable (String) -> Void)?
 
     private let queue = DispatchQueue(label: "com.hopae.axle.wallet.ble.central")
@@ -22,12 +23,14 @@ public final class BleCentralTransport: NSObject, ProximityTransport, @unchecked
     private var stateChar: CBCharacteristic?
     private var c2sChar: CBCharacteristic?
     private var s2cChar: CBCharacteristic?
+    private var identChar: CBCharacteristic?
 
     // Queue-confined state.
     private var connected = false
     private var closed = false
     private var stateNotifying = false
     private var s2cNotifying = false
+    private var expectedIdent: [UInt8]?
     private var reassembly: [UInt8] = []
     private var incoming: [[UInt8]] = []
     private var sendState: (chunks: [[UInt8]], index: Int, cont: CheckedContinuation<Void, Error>)?
@@ -36,45 +39,53 @@ public final class BleCentralTransport: NSObject, ProximityTransport, @unchecked
     private var connectWaiter: CheckedContinuation<Void, Error>?
     private var receiveWaiter: CheckedContinuation<[UInt8], Error>?
 
-    public init(serviceUuid: CBUUID, logger: (@Sendable (String) -> Void)? = nil) {
+    private let connectLock = NSLock()
+    private var connectTask: Task<Void, Error>?
+
+    init(serviceUuid: CBUUID, uuids: Ble.ModeUuids, advertisedRetrievalUuid: [UInt8]?, logger: (@Sendable (String) -> Void)?) {
         self.serviceUuid = serviceUuid
+        self.uuids = uuids
+        self.advertisedRetrievalUuid = advertisedRetrievalUuid
         self.log = logger
         super.init()
     }
 
-    /// Reader convenience: derive the holder's peripheral-server service UUID from the scanned engagement.
-    public convenience init(engagement: [UInt8], logger: (@Sendable (String) -> Void)? = nil) throws {
+    /// Reader in **peripheral-server mode**: connects to the holder's advertised service (from the scanned engagement).
+    public static func reader(engagement: [UInt8], logger: (@Sendable (String) -> Void)? = nil) throws -> BleCentralTransport {
         guard let ble = DeviceEngagement.parseBle(engagement), let uuidBytes = ble.peripheralServerUuid else {
             throw ProximityTransportError.engagementMissingBle
         }
-        self.init(serviceUuid: CBUUID(data: Data(uuidBytes)), logger: logger)
+        return BleCentralTransport(serviceUuid: CBUUID(data: Data(uuidBytes)), uuids: Ble.peripheralServer,
+                                   advertisedRetrievalUuid: nil, logger: logger)
     }
 
-    /// Powers up CoreBluetooth, scans for and connects to the holder, and completes the BLE handshake.
-    public func connect() async throws {
-        log?("reader: starting Bluetooth…")
-        manager = CBCentralManager(delegate: self, queue: queue)
-        try await awaitPoweredOn()
-        log?("reader: scanning for \(serviceUuid.uuidString)")
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            queue.async { [self] in
-                if closed { cont.resume(throwing: ProximityTransportError.closed); return }
-                connectWaiter = cont
-                manager.scanForPeripherals(withServices: [serviceUuid], options: nil)
-            }
-        }
+    /// Holder in **central-client mode**: advertises `serviceUuid` in the QR, connects to the reader, and
+    /// verifies the reader's Ident (armed via `armIdent` once the engagement's EDeviceKey is known).
+    public static func holder(serviceUuid: UUID = UUID(), logger: (@Sendable (String) -> Void)? = nil) -> BleCentralTransport {
+        BleCentralTransport(serviceUuid: CBUUID(nsuuid: serviceUuid), uuids: Ble.centralClient,
+                            advertisedRetrievalUuid: Ble.uuidBytes(serviceUuid), logger: logger)
+    }
+
+    /// Arm the Ident check from the QR engagement (holder role; call on `engagementReady`). Keeps the
+    /// `Proximity` types out of the app.
+    public func armIdent(engagement: [UInt8]) {
+        guard let bytes = try? DeviceEngagement.eDeviceKeyBytes(engagement) else { return }
+        let expected = DeviceEngagement.bleIdent(bytes)
+        queue.async { [self] in expectedIdent = expected }
     }
 
     // MARK: ProximityTransport
 
     public func send(_ message: [UInt8]) async throws {
+        try await ensureConnected()
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             queue.async { [self] in beginSend(message, cont) }
         }
     }
 
     public func receive() async throws -> [UInt8] {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[UInt8], Error>) in
+        try await ensureConnected()
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[UInt8], Error>) in
             queue.async { [self] in
                 if closed { cont.resume(throwing: ProximityTransportError.closed); return }
                 if !incoming.isEmpty { cont.resume(returning: incoming.removeFirst()) }
@@ -97,14 +108,45 @@ public final class BleCentralTransport: NSObject, ProximityTransport, @unchecked
                     receiveWaiter?.resume(throwing: ProximityTransportError.closed); receiveWaiter = nil
                     connectWaiter?.resume(throwing: ProximityTransportError.closed); connectWaiter = nil
                     sendState?.cont.resume(throwing: ProximityTransportError.closed); sendState = nil
-                    log?("reader: closed")
+                    log?("central: closed")
                 }
                 cont.resume()
             }
         }
     }
 
-    // MARK: queue-confined helpers
+    /// The BLE central-client-mode DeviceRetrievalMethod embedded in the QR (holder role only).
+    public func retrievalMethods() -> [[UInt8]] {
+        guard let advertisedRetrievalUuid,
+              let method = try? DeviceEngagement.bleRetrievalMethod(centralClientUuid: advertisedRetrievalUuid) else { return [] }
+        return [method]
+    }
+
+    public func nfcCarrier() -> NfcCarrier? { nil }
+
+    // MARK: connect
+
+    private func ensureConnected() async throws {
+        connectLock.lock()
+        if connectTask == nil { connectTask = Task { try await performConnect() } }
+        let task = connectTask!
+        connectLock.unlock()
+        try await task.value
+    }
+
+    private func performConnect() async throws {
+        log?("central: starting Bluetooth…")
+        manager = CBCentralManager(delegate: self, queue: queue)
+        try await awaitPoweredOn()
+        log?("central: scanning for \(serviceUuid.uuidString)")
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            queue.async { [self] in
+                if closed { cont.resume(throwing: ProximityTransportError.closed); return }
+                connectWaiter = cont
+                manager.scanForPeripherals(withServices: [serviceUuid], options: nil)
+            }
+        }
+    }
 
     private func awaitPoweredOn() async throws {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
@@ -118,17 +160,26 @@ public final class BleCentralTransport: NSObject, ProximityTransport, @unchecked
         }
     }
 
+    // MARK: queue-confined helpers
+
     private func deliver(_ message: [UInt8]) {
         if let waiter = receiveWaiter { receiveWaiter = nil; waiter.resume(returning: message) }
         else { incoming.append(message) }
     }
 
-    /// Once both notifications are on, begin the session (write STATE_START) and unblock `connect()`. (on queue)
+    private func subscribe() {
+        guard let peripheral, let stateChar, let s2cChar else { return }
+        log?("central: subscribing")
+        peripheral.setNotifyValue(true, for: stateChar)
+        peripheral.setNotifyValue(true, for: s2cChar)
+    }
+
+    /// Once both notifications are on, begin the session (write STATE_START) and unblock `performConnect`.
     private func startSessionIfReady() {
         guard stateNotifying, s2cNotifying, !connected, let peripheral, let stateChar else { return }
         connected = true
         peripheral.writeValue(Data([Ble.stateStart]), for: stateChar, type: .withoutResponse)
-        log?("reader: subscribed + wrote START — session open")
+        log?("central: subscribed + wrote START — session open")
         if let waiter = connectWaiter { connectWaiter = nil; waiter.resume() }
     }
 
@@ -140,27 +191,34 @@ public final class BleCentralTransport: NSObject, ProximityTransport, @unchecked
         guard let peripheral, c2sChar != nil, connected, !closed else {
             cont.resume(throwing: ProximityTransportError.notConnected); return
         }
-        log?("reader: sending \(message.count)B request")
+        log?("central: sending \(message.count)B")
         let payload = max(peripheral.maximumWriteValueLength(for: .withoutResponse) - 1, 1)
         sendState = (Ble.chunk(message, payloadSize: payload), 0, cont)
         pumpSend()
     }
 
+    /// Sends one chunk per call, then schedules the next after a gap. Write-Without-Response has no ATT ack;
+    /// `canSendWriteWithoutResponse` only guards *our* transmit buffer, not the receiver's per-connection-event
+    /// capacity — a bursted multi-chunk write is silently dropped by the peer peripheral. Pacing each chunk
+    /// into its own connection event is the fix (same reason the Android client paces its writes).
     private func pumpSend() {
-        guard var st = sendState, let peripheral, let c2sChar else { return }
-        while st.index < st.chunks.count {
-            if !peripheral.canSendWriteWithoutResponse {
-                sendState = st
-                log?("reader: c2s buffer full at chunk \(st.index)/\(st.chunks.count), waiting")
-                return // wait for peripheralIsReady
-            }
-            peripheral.writeValue(Data(st.chunks[st.index]), for: c2sChar, type: .withoutResponse)
-            st.index += 1
-            sendState = st
+        guard let st = sendState, let peripheral, let c2sChar else { return }
+        guard st.index < st.chunks.count else {
+            sendState = nil
+            log?("central: sent (\(st.chunks.count) chunks)")
+            st.cont.resume()
+            return
         }
-        sendState = nil
-        log?("reader: request sent")
-        st.cont.resume()
+        guard peripheral.canSendWriteWithoutResponse else {
+            queue.asyncAfter(deadline: .now() + Ble.chunkPacing) { [self] in pumpSend() } // buffer busy — retry
+            return
+        }
+        peripheral.writeValue(Data(st.chunks[st.index]), for: c2sChar, type: .withoutResponse)
+        log?("central: c2s chunk \(st.index + 1)/\(st.chunks.count)")
+        var next = st
+        next.index += 1
+        sendState = next
+        queue.asyncAfter(deadline: .now() + Ble.chunkPacing) { [self] in pumpSend() }
     }
 }
 
@@ -181,12 +239,12 @@ extension BleCentralTransport: CBCentralManagerDelegate {
         self.peripheral = peripheral
         peripheral.delegate = self
         central.stopScan()
-        log?("reader: found holder, connecting")
+        log?("central: found peer, connecting")
         central.connect(peripheral, options: nil)
     }
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        log?("reader: connected, discovering services")
+        log?("central: connected, discovering services")
         peripheral.discoverServices([serviceUuid])
     }
 
@@ -204,7 +262,7 @@ extension BleCentralTransport: CBPeripheralDelegate {
         guard let service = peripheral.services?.first(where: { $0.uuid == serviceUuid }) else {
             failConnect(error ?? ProximityTransportError.notConnected); return
         }
-        peripheral.discoverCharacteristics([uuids.state, uuids.client2Server, uuids.server2Client], for: service)
+        peripheral.discoverCharacteristics([uuids.state, uuids.client2Server, uuids.server2Client, Ble.ident], for: service)
     }
 
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
@@ -213,16 +271,22 @@ extension BleCentralTransport: CBPeripheralDelegate {
             case uuids.state: stateChar = characteristic
             case uuids.client2Server: c2sChar = characteristic
             case uuids.server2Client: s2cChar = characteristic
+            case Ble.ident: identChar = characteristic
             default: break
             }
         }
-        guard let stateChar, let s2cChar, c2sChar != nil else {
-            log?("reader: ❌ missing characteristics on holder service")
+        guard stateChar != nil, s2cChar != nil, c2sChar != nil else {
+            log?("central: ❌ missing characteristics on peer service")
             failConnect(ProximityTransportError.notConnected); return
         }
-        log?("reader: characteristics found, subscribing")
-        peripheral.setNotifyValue(true, for: stateChar)
-        peripheral.setNotifyValue(true, for: s2cChar)
+        // Central-client mode: verify the reader's Ident before opening the session; else subscribe directly.
+        if expectedIdent != nil, let identChar {
+            log?("central: reading Ident")
+            peripheral.readValue(for: identChar)
+        } else {
+            log?("central: characteristics found")
+            subscribe()
+        }
     }
 
     public func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
@@ -233,20 +297,32 @@ extension BleCentralTransport: CBPeripheralDelegate {
 
     public func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard let value = characteristic.value else { return }
+        if characteristic.uuid == Ble.ident {
+            if let expectedIdent, [UInt8](value) != expectedIdent {
+                log?("central: ❌ Ident mismatch")
+                failConnect(ProximityTransportError.identMismatch)
+            } else {
+                log?("central: Ident verified")
+                subscribe()
+            }
+            return
+        }
         if characteristic.uuid == uuids.server2Client {
             guard let prefix = value.first else { return }
             reassembly.append(contentsOf: value.dropFirst())
+            log?("central: s2c chunk \(value.count)B \(prefix == Ble.chunkLast ? "last" : "more") total=\(reassembly.count)")
             if prefix == Ble.chunkLast {
                 let message = reassembly
                 reassembly = []
+                log?("central: received \(message.count)B message")
                 deliver(message)
             }
         }
-        // A state value of 0x02 means the holder ended the session; the read has already completed by then.
+        // A state value of 0x02 means the peer ended the session; the exchange has already completed by then.
     }
 
     public func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
-        log?("reader: c2s buffer ready")
-        pumpSend()
+        // No-op: sending is driven by the paced timer in pumpSend (which re-checks canSendWriteWithoutResponse),
+        // so we don't also advance here — that would collapse the pacing back into a burst.
     }
 }

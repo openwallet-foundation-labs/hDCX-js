@@ -4,11 +4,10 @@ import SwiftUI
 /// A 1:1 port of android `SettingsScreen`, with the same sections, rows, and copy.
 struct SettingsView: View {
     @Environment(WalletModel.self) private var model
+    @Environment(AppLock.self) private var appLock
     @State private var resetConfirm = false
-    // Persisted like android `ProximityPrefs`. iOS currently drives peripheral-server + static only; the
-    // preference is stored for parity and future modes.
+    /// Holder BLE role for in-person present: false = peripheral-server (advertise), true = central-client (connect out).
     @AppStorage("bleCentral") private var bleCentral = false
-    @AppStorage("nfcNegotiated") private var nfcNegotiated = false
 
     private var version: String {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "—"
@@ -35,10 +34,8 @@ struct SettingsView: View {
                         SectionLabel("Proximity sharing")
                         WalletCard(padding: .flush) {
                             choiceRow("Bluetooth role", ["Peripheral", "Central"], bleCentral ? 1 : 0) { bleCentral = $0 == 1 }
-                            divider
-                            choiceRow("NFC handover", ["Static", "Negotiated"], nfcNegotiated ? 1 : 0) { nfcNegotiated = $0 == 1 }
                         }
-                        Text("Peripheral + Static work with the widest range of readers. Change these only if a reader needs it.")
+                        Text("Peripheral advertises and lets the reader connect (widest compatibility). Central makes this device connect out to the reader instead.")
                             .font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted)
                     }
 
@@ -64,10 +61,13 @@ struct SettingsView: View {
             .walletScreenBackground()
             .toolbar(.hidden, for: .navigationBar)
             .alert("Reset wallet?", isPresented: $resetConfirm) {
-                Button("Reset", role: .destructive) { Task { await model.reset() } }
+                Button("Reset", role: .destructive) {
+                    Task { await model.reset() }
+                    appLock.reset() // clear the PIN/biometric and drop back to onboarding
+                }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This erases all credentials and transaction history. Documents can be re-issued later.")
+                Text("This erases all credentials, transaction history, and your PIN. You'll set the wallet up again.")
             }
         }
     }

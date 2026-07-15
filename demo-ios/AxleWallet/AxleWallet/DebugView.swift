@@ -22,9 +22,11 @@ struct DebugView: View {
         return .info
     }
 
+    /// Newest first (android v0.5 "newest-first debug log").
     private var shown: [String] {
-        guard let filter, filter != .all else { return log.lines }
-        return log.lines.filter { levelOf($0) == filter }
+        let lines = log.lines
+        let filtered = (filter == nil || filter == .all) ? lines : lines.filter { levelOf($0) == filter }
+        return filtered.reversed()
     }
 
     var body: some View {

@@ -7,6 +7,8 @@
 		<string>Manrope-Variable.ttf</string>
 		<string>JetBrainsMono-Variable.ttf</string>
 	</array>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Axle Wallet uses Face ID to unlock your wallet.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Axle Wallet uses the camera to scan QR codes for credential offers and presentation requests.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>

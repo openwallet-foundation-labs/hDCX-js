@@ -11,7 +11,7 @@ import SwiftUI
 struct AxleWalletApp: App {
     var body: some Scene {
         WindowGroup {
-            WalletHome()
+            RootView()
         }
     }
 }

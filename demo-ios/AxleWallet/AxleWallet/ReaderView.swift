@@ -2,6 +2,7 @@ import AppleProximity
 import Foundation
 import SwiftUI
 import Wallet
+import WalletAPI // ProximityTransport
 
 /// Reader/verifier-side ISO 18013-5 proximity — the iOS counterpart of android `ProximityReaderScreen`.
 /// Scans the holder's QR DeviceEngagement, connects over BLE as the central, requests the PID elements, and
@@ -14,7 +15,7 @@ struct ReaderView: View {
     @State private var showScanner = false
     @State private var results: [ReaderResultDoc] = []
     @State private var errorMessage: String?
-    @State private var transport: BleCentralTransport?
+    @State private var transport: (any ProximityTransport)?
 
     enum Phase { case idle, connecting, reading, results, failed }
 
@@ -108,9 +109,8 @@ struct ReaderView: View {
         }
         phase = .connecting
         do {
-            let t = try BleCentralTransport(engagement: engagement, logger: { m in Task { @MainActor in LogStore.shared.log("BLE ▸ \(m)") } })
+            let t = try await makeReaderTransport(engagement)
             transport = t
-            try await t.connect()
             phase = .reading
             let verified = try await wallet.reader.read(transport: t, engagement: engagement, documents: MdocReaderRequests.pid())
             results = MdocReaderRequests.flatten(verified)
@@ -120,6 +120,21 @@ struct ReaderView: View {
             phase = .failed
         }
         if let transport { await transport.close(); self.transport = nil }
+    }
+
+    /// Peripheral-server holder → this reader is the central (connects out). Central-client holder → this
+    /// reader is the peripheral (advertises + exposes Ident). Picked from the scanned engagement's BLE mode.
+    private func makeReaderTransport(_ engagement: [UInt8]) async throws -> any ProximityTransport {
+        if let central = try? BleCentralTransport.reader(engagement: engagement, logger: bleLogger) {
+            return central
+        }
+        let peripheral = try BlePeripheralTransport.reader(engagement: engagement, logger: bleLogger)
+        try await peripheral.start()
+        return peripheral
+    }
+
+    private var bleLogger: @Sendable (String) -> Void {
+        { m in Task { @MainActor in LogStore.shared.log("BLE ▸ \(m)") } }
     }
 
     private func close() {

@@ -31,6 +31,10 @@ enum Ble {
     static let chunkMore: UInt8 = 0x01 // more chunks follow
     static let chunkLast: UInt8 = 0x00 // final chunk of the message
 
+    /// Inter-chunk gap for paced Write-Without-Response, so each chunk lands in its own connection event and
+    /// the receiver peripheral doesn't drop a burst (matches the Android client's pacing).
+    static let chunkPacing: TimeInterval = 0.04
+
     /// Splits a whole framed message into chunks, each prefixed with `chunkMore`/`chunkLast`. `payloadSize`
     /// is the usable bytes per chunk (the negotiated MTU budget minus the 1-byte prefix). An empty message
     /// still yields one final (empty) chunk.

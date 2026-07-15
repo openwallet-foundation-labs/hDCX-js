@@ -3,6 +3,7 @@ import CoreImage.CIFilterBuiltins
 import SwiftUI
 import UIKit
 import Wallet
+import WalletAPI // ProximityTransport
 
 /// Holder-side ISO 18013-5 proximity presentation over BLE — the iOS counterpart of android
 /// `ProximityHolderDialog`. Advertises a per-session BLE service, shows the QR DeviceEngagement for the
@@ -15,7 +16,7 @@ struct ProximityHolderView: View {
     @State private var qr: UIImage?
     @State private var request: ProximityRequest?
     @State private var errorMessage: String?
-    @State private var transport: BlePeripheralTransport?
+    @State private var transport: (any ProximityTransport)?
     @State private var session: ProximitySession?
 
     enum Phase { case starting, engaging, consent, sending, done, declined, failed }
@@ -126,24 +127,41 @@ struct ProximityHolderView: View {
 
     // MARK: - Behavior
 
+    private var bleLogger: @Sendable (String) -> Void {
+        { m in Task { @MainActor in LogStore.shared.log("BLE ▸ \(m)") } }
+    }
+
     private func run() async {
         guard transport == nil else { return }
-        let t = BlePeripheralTransport(logger: { m in Task { @MainActor in LogStore.shared.log("BLE ▸ \(m)") } })
-        transport = t
-        do {
-            try await t.start()
-        } catch {
-            errorMessage = String(describing: error)
-            phase = .failed
-            return
+        // Settings "Bluetooth role": Central = this device connects out (central-client mode); Peripheral =
+        // this device advertises (peripheral-server mode, the default).
+        let central = UserDefaults.standard.bool(forKey: "bleCentral")
+        let session: ProximitySession
+        var centralHolder: BleCentralTransport? // for arming Ident on engagementReady
+        if central {
+            let t = BleCentralTransport.holder(logger: bleLogger)
+            transport = t
+            centralHolder = t
+            session = wallet.proximity.present(t) // connects lazily on the first receive()
+        } else {
+            let t = BlePeripheralTransport.holder(logger: bleLogger)
+            transport = t
+            do {
+                try await t.start()
+            } catch {
+                errorMessage = String(describing: error)
+                phase = .failed
+                return
+            }
+            session = wallet.proximity.present(t)
         }
-        let s = wallet.proximity.present(t)
-        session = s
-        for await state in s.states {
+        self.session = session
+        for await state in session.states {
             switch state {
             case .generatingEngagement:
                 phase = .starting
             case let .engagementReady(engagement, _):
+                centralHolder?.armIdent(engagement: engagement)
                 qr = Self.qrImage(mdocQR(engagement))
                 phase = .engaging
                 LogStore.shared.log("present: QR ready — waiting for reader")
