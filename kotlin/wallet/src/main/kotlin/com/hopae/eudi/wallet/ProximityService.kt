@@ -127,6 +127,22 @@ class ProximityService internal constructor(
     }
 
     /**
+     * Resolves an `org-iso-mdoc` (ISO 18013-7) DC API request for the consent screen — the requested documents +
+     * matching credentials and the **verified reader authentication** (§9.1.4, chained to a reader anchor) — without
+     * producing the response. Call [respondDcApiMdoc] on approval. [origin] is the calling web origin, which binds
+     * the SessionTranscript the reader auth was signed over (a mismatch simply leaves the reader untrusted).
+     */
+    suspend fun resolveDcApiMdoc(deviceRequestBase64: String, encryptionInfoBase64: String, origin: String): DcApiMdocRequest {
+        val deviceRequest = catchingProximity { DeviceRequest.decode(Base64Url.decode(deviceRequestBase64)) }
+        val transcript = MdocSessionTranscript.dcApiIsoMdoc(encryptionInfoBase64, origin)
+        val documents = deviceRequest.docRequests.map { dr ->
+            RequestedDocumentView(dr.docType, dr.requested.mapValues { (_, elems) -> elems.map { it.identifier } }, findMdocs(dr.docType))
+        }
+        val reader = verifyReader(deviceRequest, transcript)
+        return DcApiMdocRequest(documents, satisfiable = documents.all { it.candidates.isNotEmpty() }, reader)
+    }
+
+    /**
      * ISO/IEC 18013-7:2025 Annex C `org-iso-mdoc` Digital Credentials API: builds the mdoc DeviceResponse for
      * [deviceRequestBase64], HPKE-encrypts it to the verifier's `recipientPublicKey` (from [encryptionInfoBase64]),
      * and returns the base64url of `["dcapi", {enc, cipherText}]`. No transport — the platform mediates.

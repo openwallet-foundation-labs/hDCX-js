@@ -31,6 +31,16 @@ public struct RequestedDocumentView {
     public let candidates: [CredentialId]
 }
 
+/// An org-iso-mdoc (ISO 18013-7) Digital Credentials API request, resolved for the consent screen: the requested
+/// documents/elements + matching credentials, and the verified reader identity. Unlike the proximity flow there is
+/// no BLE session — the response is produced separately (on approval) via `ProximityService.respondDcApiMdoc`.
+public struct DcApiMdocRequest {
+    public let documents: [RequestedDocumentView]
+    public let satisfiable: Bool
+    /// Who is asking — from verified reader authentication (ISO 18013-5 §9.1.4), if present and trusted.
+    public let reader: ProximityReaderInfo
+}
+
 /// The user's choice of which stored credential answers each requested doctype.
 public struct ProximitySelection {
     public let chosen: [String: CredentialId]

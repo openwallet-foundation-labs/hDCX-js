@@ -61,6 +61,13 @@ The Digital Credentials API channel offers **two** protocols; the frontend picks
   `[null, null, ["dcapi", SHA-256(CBOR([EncryptionInfo, origin]))]]`, binding the presentation to this verifier's
   `EncryptionInfo` and the calling web origin. Handled by `src/vp/iso-mdoc.service.ts`.
 
+  Each `DocRequest` carries **reader authentication** (ISO 18013-5 §9.1.4) — the ISO analogue of the signed
+  OpenID4VP request: a COSE_Sign1 over `ReaderAuthentication = ["ReaderAuthentication", SessionTranscript,
+  ItemsRequestBytes]`, signed ES256 with the RP profile's **WRPAC** key (the WRPAC chain is the `x5chain`). The
+  wallet chains it to a reader trust anchor to show *who is asking* (a "trusted reader" verdict). Reader auth is
+  bound to the primary `expected_origins[0]`; a wallet invoked from a different allowed origin still presents, but
+  the reader shows as untrusted. There is **no** WRPRC/registrar verdict here — that transport is OpenID4VP-only.
+
 ## RP onboarding
 
 The verifier authenticates to wallets with registrar-issued certs. The `tools/` scripts provision them against

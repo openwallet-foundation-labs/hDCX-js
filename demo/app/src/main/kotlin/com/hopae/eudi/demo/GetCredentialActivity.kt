@@ -4,7 +4,6 @@ package com.hopae.eudi.demo
 
 import android.content.Intent
 import android.os.Bundle
-import android.util.Base64
 import androidx.activity.compose.setContent
 import androidx.credentials.GetDigitalCredentialOption
 import androidx.credentials.provider.PendingIntentHandler
@@ -19,7 +18,6 @@ import com.hopae.eudi.wallet.PresentationSelection
 import com.hopae.eudi.wallet.PresentationState
 import com.hopae.eudi.wallet.android.dcapi.DcApiRequest
 import com.hopae.eudi.wallet.android.dcapi.DcApiResult
-import com.hopae.eudi.wallet.mdoc.DeviceRequest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -50,24 +48,36 @@ class GetCredentialActivity : FragmentActivity() {
             val mdoc = DcApiRequest.matchProtocol(option.requestJson, listOf("org-iso-mdoc", "org.iso.mdoc"))
             if (mdoc != null) {
                 val (proto, data) = mdoc
-                val items = runCatching {
-                    DeviceRequest.decode(Base64.decode(data.getString("deviceRequest"), Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)).docRequests.map { dr ->
-                        ConsentItem(dr.docType, dr.requested.flatMap { (_, els) -> els.map { ClaimRow(claimPathLabel(listOf(it.identifier)), "Shared") } })
-                    }
-                }.getOrDefault(emptyList())
-                showConsent(DcApiVerifier(origin, "In-app request", signedRequestVerified = false, registration = null), items,
-                    onApprove = {
-                        lifecycleScope.launch {
-                            runCatching {
-                                val response = wallet.proximity.respondDcApiMdoc(data.getString("deviceRequest"), data.getString("encryptionInfo"), origin)
-                                DcApiResult.setResponse(resultData, DcApiResult.mdocResponseJson(proto, response))
-                                LogStore.log("✅ DC API (mdoc) response returned to caller")
-                                setResult(RESULT_OK, resultData)
-                            }.onFailure { finishExceptionData(resultData, it.message) }
-                            finish()
+                val deviceReq = data.getString("deviceRequest")
+                val encInfo = data.getString("encryptionInfo")
+                runCatching {
+                    // Resolve first: verify reader authentication (ISO 18013-5 §9.1.4) + list requested docs/claims.
+                    val resolved = wallet.proximity.resolveDcApiMdoc(deviceReq, encInfo, origin)
+                    val creds = runCatching { wallet.credentials.list().associateBy { it.id.value } }.getOrDefault(emptyMap())
+                    val items = resolved.documents.map { doc ->
+                        val cred = doc.candidates.firstOrNull()?.let { creds[it.value] }
+                        val byId = (cred?.lifecycle as? Lifecycle.Issued)?.claims.orEmpty().associateBy { it.path.lastOrNull() }
+                        val rows = doc.requestedElements.values.flatten().map { id ->
+                            ClaimRow(claimPathLabel(listOf(id)), byId[id]?.value?.display() ?: "Shared")
                         }
-                    },
-                    onDecline = { finishError(resultData, "declined by user") })
+                        ConsentItem(cred?.let { credTitle(it) } ?: doc.docType, rows)
+                    }
+                    // Reader auth is the ISO analogue of a signed request — surface its verdict (no WRPRC in raw mdoc).
+                    val readerName = resolved.reader.commonName ?: origin
+                    showConsent(DcApiVerifier(readerName, "In-app request", resolved.reader.trusted, registration = null), items,
+                        onApprove = {
+                            lifecycleScope.launch {
+                                runCatching {
+                                    val response = wallet.proximity.respondDcApiMdoc(deviceReq, encInfo, origin)
+                                    DcApiResult.setResponse(resultData, DcApiResult.mdocResponseJson(proto, response))
+                                    LogStore.log("✅ DC API (mdoc) response returned to caller")
+                                    setResult(RESULT_OK, resultData)
+                                }.onFailure { finishExceptionData(resultData, it.message) }
+                                finish()
+                            }
+                        },
+                        onDecline = { finishError(resultData, "declined by user") })
+                }.onFailure { finishError(resultData, it.message) }
                 return@launch
             }
 

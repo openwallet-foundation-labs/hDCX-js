@@ -19,13 +19,24 @@ interface RawKeystore {
 
 interface LoadedProfile {
   privateKey: CryptoKey;
+  /** The same WRPAC key as a WebCrypto ECDSA signing key — for raw COSE_Sign1 (mdoc reader authentication). */
+  signingKey: CryptoKey;
   cert: x509.X509Certificate;
   /** base64 (not url) DER of the leaf WRPAC — the JOSE `x5c` entry. */
   x5c: string[];
+  /** DER of the WRPAC chain (leaf first, + CA when configured) — the COSE `x5chain` for mdoc reader auth. */
+  chainDer: Uint8Array[];
   /** `x509_hash` value: base64url(SHA-256(certDer)). */
   thumbprint: string;
   clientId: string;
   wrprc?: string;
+}
+
+/** PEM (PKCS#8 or certificate) → DER bytes (a standalone ArrayBuffer for WebCrypto). */
+function pemToDer(pem: string): ArrayBuffer {
+  const b64 = pem.replace(/-----BEGIN [^-]+-----/, '').replace(/-----END [^-]+-----/, '').replace(/\s+/g, '');
+  const buf = Buffer.from(b64, 'base64');
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
 }
 
 /**
@@ -97,6 +108,18 @@ export class KeystoreService implements OnModuleInit {
     return this.profile(rp).wrprc;
   }
 
+  /** The profile's WRPAC certificate chain (DER, leaf first) — the COSE `x5chain` for mdoc reader authentication. */
+  readerChainDer(rp: RpProfile): Uint8Array[] {
+    return this.profile(rp).chainDer;
+  }
+
+  /** Raw ES256 (P-256 r||s) signature over `data` with the profile's WRPAC key — for a COSE_Sign1 mdoc readerAuth. */
+  async signCoseRaw(data: Uint8Array, rp: RpProfile): Promise<Uint8Array> {
+    const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+    const sig = await webcrypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, this.profile(rp).signingKey, ab);
+    return new Uint8Array(sig);
+  }
+
   /** Signs an OpenID4VP request object (JAR) with the profile's WRPAC key: ES256, typ `oauth-authz-req+jwt`, x5c leaf. */
   async signRequestObject(payload: Record<string, unknown>, rp: RpProfile): Promise<string> {
     const p = this.profile(rp);
@@ -111,17 +134,34 @@ export class KeystoreService implements OnModuleInit {
 
   private async loadFromPem(ks: RawKeystore): Promise<LoadedProfile> {
     const privateKey = (await importPKCS8(ks.privateKeyPem, 'ES256', { extractable: false })) as CryptoKey;
+    // The same key as a WebCrypto ECDSA signer for raw COSE_Sign1 (mdoc reader auth) — jose signs JOSE only.
+    const signingKey = await webcrypto.subtle.importKey(
+      'pkcs8',
+      pemToDer(ks.privateKeyPem),
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      false,
+      ['sign'],
+    );
     const cert = new x509.X509Certificate(ks.certPem);
-    return this.fromCert(privateKey, cert);
+    const chainDer = [new Uint8Array(cert.rawData)];
+    if (ks.caCertPem) chainDer.push(new Uint8Array(new x509.X509Certificate(ks.caCertPem).rawData));
+    return this.fromCert(privateKey, signingKey, cert, chainDer);
   }
 
-  private fromCert(privateKey: CryptoKey, cert: x509.X509Certificate): LoadedProfile {
+  private fromCert(
+    privateKey: CryptoKey,
+    signingKey: CryptoKey,
+    cert: x509.X509Certificate,
+    chainDer: Uint8Array[],
+  ): LoadedProfile {
     const der = new Uint8Array(cert.rawData);
     const thumbprint = createHash('sha256').update(der).digest('base64url');
     return {
       privateKey,
+      signingKey,
       cert,
       x5c: [Buffer.from(der).toString('base64')],
+      chainDer,
       thumbprint,
       clientId: `x509_hash:${thumbprint}`,
     };
@@ -145,6 +185,7 @@ export class KeystoreService implements OnModuleInit {
     const pkcs8 = Buffer.from(await webcrypto.subtle.exportKey('pkcs8', keys.privateKey)).toString('base64');
     const privateKeyPem = `-----BEGIN PRIVATE KEY-----\n${pkcs8.match(/.{1,64}/g)!.join('\n')}\n-----END PRIVATE KEY-----\n`;
     const privateKey = (await importPKCS8(privateKeyPem, 'ES256')) as CryptoKey;
-    return this.fromCert(privateKey, cert);
+    // The generated key already has 'sign' usage — reuse it as the WebCrypto COSE signer (self-signed, dev only).
+    return this.fromCert(privateKey, keys.privateKey, cert, [new Uint8Array(cert.rawData)]);
   }
 }

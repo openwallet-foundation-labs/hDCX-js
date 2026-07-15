@@ -110,7 +110,9 @@ export class VpService {
       throw new Error('org-iso-mdoc requires at least one mso_mdoc credential (pid_mdoc, mdl); SD-JWT VC is not supported');
     }
     const expectedOrigins = origins?.length ? origins : [this.baseUrl];
-    const { deviceRequest, encryptionInfo, nonce, encPrivateJwk } = await this.isoMdoc.createSession(mdocKeys);
+    // Reader auth binds to one origin's SessionTranscript; sign for the primary expected origin (the wallet
+    // rebuilds the transcript from its actual calling origin — a match yields a "trusted reader" verdict).
+    const { deviceRequest, encryptionInfo, nonce, encPrivateJwk } = await this.isoMdoc.createSession(mdocKeys, rp, expectedOrigins[0]);
 
     const session: PresentationSession = {
       id,

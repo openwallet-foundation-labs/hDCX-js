@@ -109,7 +109,23 @@ public struct ProximityService {
                                 reader: reader, deviceRequest: deviceRequest, transcript: transcript, session: session)
     }
 
-    /// Verifies reader authentication (ISO 18013-5 §9.1.4) against the configured reader anchors.
+    /// Resolves an `org-iso-mdoc` (ISO 18013-7) DC API request for the consent screen — the requested documents +
+    /// matching credentials and the **verified reader authentication** (§9.1.4, chained to a reader anchor) — without
+    /// producing the response. Call `respondDcApiMdoc` on approval. `origin` is the calling web origin, which binds
+    /// the SessionTranscript the reader auth was signed over (a mismatch simply leaves the reader untrusted).
+    public func resolveDcApiMdoc(deviceRequestBase64: String, encryptionInfoBase64: String, origin: String) async throws -> DcApiMdocRequest {
+        let deviceRequest = try DeviceRequest.decode(try Base64Url.decode(deviceRequestBase64))
+        let transcript = try MdocSessionTranscript.dcApiIsoMdoc(encryptionInfoBase64: encryptionInfoBase64, origin: origin)
+        var documents: [RequestedDocumentView] = []
+        for dr in deviceRequest.docRequests {
+            var elements: [String: [String]] = [:]
+            for (ns, els) in dr.requested { elements[ns] = els.map { $0.identifier } }
+            documents.append(RequestedDocumentView(docType: dr.docType, requestedElements: elements, candidates: try await findMdocs(dr.docType)))
+        }
+        let reader = await verifyReader(deviceRequest, transcript)
+        return DcApiMdocRequest(documents: documents, satisfiable: documents.allSatisfy { !$0.candidates.isEmpty }, reader: reader)
+    }
+
     /// ISO/IEC 18013-7:2025 Annex C `org-iso-mdoc` Digital Credentials API: builds the mdoc DeviceResponse for
     /// `deviceRequestBase64`, HPKE-encrypts it to the verifier's `recipientPublicKey` (from `encryptionInfoBase64`),
     /// and returns the base64url of `["dcapi", {enc, cipherText}]`. No transport — the platform mediates.
