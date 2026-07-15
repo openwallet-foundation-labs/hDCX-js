@@ -7,6 +7,7 @@ import Wallet
 /// All the cryptography — mdoc `DeviceResponse` build, HPKE seal to the verifier's key, ISO/IEC 18013-7:2025 Annex C
 /// SessionTranscript — is the SDK's `proximity.respondDcApiMdoc`. This only marshals the wire shapes Apple's API
 /// uses (base64url-JSON in, raw `Data` out) and normalizes the origin so its hash matches what the verifier signed.
+/// Behaviour matches android's `GetCredentialActivity` mdoc branch: resolve (consent + reader badge) → respond.
 public enum DcApiResponder {
     public enum Failure: Error, CustomStringConvertible {
         case missingOrigin
@@ -26,7 +27,7 @@ public enum DcApiResponder {
     /// Builds the encrypted `org-iso-mdoc` DeviceResponse for a raw web-presentment request. `wallet` must be built
     /// from the shared Secure Enclave + keychain group so it can read the app's credentials and sign with their
     /// device keys. Auto-discloses `requested ∩ held` (Apple's picker already chose the document; there is no
-    /// per-claim consent in this path, matching `respondDcApiMdoc`).
+    /// per-claim consent in this path, matching `respondDcApiMdoc` and android).
     public static func responseData(rawRequestData: Data, origin: URL?, wallet: Wallet) async throws -> Data {
         guard let origin else { throw Failure.missingOrigin }
         guard let req = try? JSONDecoder().decode(RawRequest.self, from: rawRequestData) else { throw Failure.malformedRequest }
