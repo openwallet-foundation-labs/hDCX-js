@@ -33,14 +33,15 @@ class ProximityReaderInfo(
 class RequestedDocumentView(
     val docType: String,
     val requestedElements: Map<String, List<String>>,
-    val candidate: CredentialId?,
+    /** Stored credentials that can answer this doctype; the holder chooses one when there is more than one. */
+    val candidates: List<CredentialId>,
 )
 
 /** The user's choice of which stored credential answers each requested doctype. */
 class ProximitySelection(val chosen: Map<String, CredentialId>) {
     companion object {
         fun auto(request: ProximityRequest): ProximitySelection =
-            ProximitySelection(request.documents.mapNotNull { doc -> doc.candidate?.let { doc.docType to it } }.toMap())
+            ProximitySelection(request.documents.mapNotNull { doc -> doc.candidates.firstOrNull()?.let { doc.docType to it } }.toMap())
     }
 }
 

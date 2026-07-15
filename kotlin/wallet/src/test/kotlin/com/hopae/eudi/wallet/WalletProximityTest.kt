@@ -120,7 +120,7 @@ class WalletProximityTest {
         val requestState = withTimeout(15_000) { session.state.first { it is ProximityState.RequestReceived || it is ProximityState.Failed } }
         assertTrue(requestState is ProximityState.RequestReceived, "request: $requestState")
         assertTrue(requestState.request.satisfiable, "mDL request satisfiable")
-        assertEquals(CredentialId("mdl-1"), requestState.request.documents.single().candidate)
+        assertEquals(CredentialId("mdl-1"), requestState.request.documents.single().candidates.single())
         session.respond(ProximitySelection.auto(requestState.request))
 
         // reader: decrypt the DeviceResponse over the session and verify selective disclosure + device signature

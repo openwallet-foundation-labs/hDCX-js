@@ -144,7 +144,7 @@ class ProximityService internal constructor(
         val recipientKey = CoseKey.decode(recipientKeyCbor)
 
         val transcript = MdocSessionTranscript.dcApiIsoMdoc(encryptionInfoBase64, origin)
-        val chosen = deviceRequest.docRequests.mapNotNull { dr -> findMdoc(dr.docType)?.let { dr.docType to it } }.toMap()
+        val chosen = deviceRequest.docRequests.mapNotNull { dr -> findMdocs(dr.docType).firstOrNull()?.let { dr.docType to it } }.toMap()
         if (chosen.isEmpty()) throw WalletError.Proximity.NoMatchingCredential("no stored mdoc for the DC API request")
 
         val deviceResponse = buildDeviceResponse(deviceRequest, transcript, ProximitySelection(chosen))
@@ -187,11 +187,11 @@ class ProximityService internal constructor(
             RequestedDocumentView(
                 docType = dr.docType,
                 requestedElements = dr.requested.mapValues { (_, elems) -> elems.map { it.identifier } },
-                candidate = findMdoc(dr.docType),
+                candidates = findMdocs(dr.docType),
             )
         }
         val reader = verifyReader(deviceRequest, transcript)
-        return ProximityRequest(documents, satisfiable = documents.all { it.candidate != null }, reader, deviceRequest, transcript, session)
+        return ProximityRequest(documents, satisfiable = documents.all { it.candidates.isNotEmpty() }, reader, deviceRequest, transcript, session)
     }
 
     /** Verifies reader authentication (ISO 18013-5 §9.1.4) against the configured reader anchors. */
@@ -206,11 +206,11 @@ class ProximityService internal constructor(
         }.getOrElse { ProximityReaderInfo(trusted = false, commonName = null, certificateChainDer = emptyList()) }
     }
 
-    private suspend fun findMdoc(docType: String): CredentialId? =
-        store.list().firstOrNull { envelope ->
+    private suspend fun findMdocs(docType: String): List<CredentialId> =
+        store.list().filter { envelope ->
             envelope.lifecycle is EnvelopeLifecycle.Issued &&
                 (envelope.format as? CredentialFormat.MsoMdoc)?.docType == docType
-        }?.id
+        }.map { it.id }
 
     /**
      * Builds the DeviceResponse for the first requested document (single-document retrieval; multi-doc is a

@@ -45,6 +45,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Nfc
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -55,6 +56,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import com.hopae.eudi.demo.security.BiometricAuth
 import com.hopae.eudi.demo.security.WalletSecurity
+import com.hopae.eudi.demo.ui.components.DocTile
 import com.hopae.eudi.demo.ui.components.InfoRow
 import com.hopae.eudi.demo.ui.components.PrimaryButton
 import com.hopae.eudi.demo.ui.components.SecondaryButton
@@ -75,6 +77,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -86,10 +89,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
-import com.hopae.eudi.wallet.ClaimCategory
 import com.hopae.eudi.wallet.Credential
 import com.hopae.eudi.wallet.Lifecycle
 import com.hopae.eudi.wallet.RequestedDocumentView
@@ -108,6 +111,7 @@ import com.hopae.eudi.wallet.proximity.MdocNfcEngagement
 import com.hopae.eudi.wallet.proximity.NfcEngagementProcessor
 import com.hopae.eudi.wallet.proximity.DeviceEngagement
 import kotlinx.coroutines.flow.first
+import com.hopae.eudi.wallet.spi.CredentialId
 import com.hopae.eudi.wallet.spi.ProximityTransport
 import java.util.UUID
 import com.hopae.eudi.wallet.ProximityRequest
@@ -134,7 +138,7 @@ else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
 private fun readerRequest() = listOf(
     RequestedDocument(
         "eu.europa.ec.eudi.pid.1",
-        mapOf("eu.europa.ec.eudi.pid.1" to listOf("family_name", "given_name", "birth_date", "age_over_18", "nationality")),
+        mapOf("eu.europa.ec.eudi.pid.1" to listOf("family_name", "given_name", "birth_date", "nationality")),
     ),
 )
 
@@ -282,9 +286,9 @@ fun ProximityHolderDialog(wallet: Wallet, onClose: () -> Unit) {
     val c = WalletTheme.colors
     val activity = context as? FragmentActivity
     fun decline() { session?.decline(); phase = ProxPhase.Declined }
-    fun share(req: ProximityRequest) {
+    fun share(sel: ProximitySelection) {
         val s = session ?: return
-        val go = { s.respond(ProximitySelection.auto(req)); phase = ProxPhase.Sending }
+        val go = { s.respond(sel); phase = ProxPhase.Sending }
         val useBio = activity != null && WalletSecurity.biometricEnabled(context) && BiometricAuth.canUse(activity)
         if (useBio) BiometricAuth.prompt(activity, "Confirm sharing", "Verify to share with the reader", onSuccess = { go() }, negativeText = "Cancel")
         else go()
@@ -312,7 +316,7 @@ fun ProximityHolderDialog(wallet: Wallet, onClose: () -> Unit) {
             val onKind: (Int) -> Unit = { k -> kind = k; ProximityPrefs.setKind(context, k) }
             when (phase) {
                 ProxPhase.Consent ->
-                    if (req != null) ProximityReview(req, credsById, onShare = { share(req) }, onDecline = { decline() })
+                    if (req != null) ProximityReview(req, credsById, onShare = { share(it) }, onDecline = { decline() })
                     else ProximityEngagement(kind, onKind, qr, status)
                 ProxPhase.Sending -> Centered { PresentProgress("Sharing…", "Sending your data to the reader.") }
                 ProxPhase.Done -> Centered { PresentDone("Shared", "The reader received your data.", onDone = onClose) }
@@ -389,9 +393,15 @@ private fun RowScope.KindChip(selected: Boolean, label: String, onClick: () -> U
 
 /** Consent for an in-person reader's request — reader trust + shared/not-shared attributes + Share/Decline. */
 @Composable
-private fun ProximityReview(req: ProximityRequest, credsById: Map<String, Credential>, onShare: () -> Unit, onDecline: () -> Unit) {
+private fun ProximityReview(req: ProximityRequest, credsById: Map<String, Credential>, onShare: (ProximitySelection) -> Unit, onDecline: () -> Unit) {
     val c = WalletTheme.colors
     val reader = req.reader
+    // The holder's chosen credential per requested doctype (defaults to the first candidate).
+    val chosen = remember(req) {
+        mutableStateMapOf<String, CredentialId>().apply {
+            req.documents.forEach { d -> d.candidates.firstOrNull()?.let { put(d.docType, it) } }
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             // Reader
@@ -414,26 +424,25 @@ private fun ProximityReview(req: ProximityRequest, credsById: Map<String, Creden
             }
             // Shared attributes per requested document.
             SectionLabel("You'll share")
-            req.documents.forEach { ProximityDocCard(it, credsById) }
+            req.documents.forEach { ProximityDocCard(it, credsById, chosen) }
             Text("Only the shown attributes are shared. Your full documents never leave this device.", style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
         }
         Spacer(Modifier.height(12.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             SecondaryButton("Decline", onDecline, Modifier.weight(1f))
-            PrimaryButton("Share", onShare, Modifier.weight(1.5f), enabled = req.satisfiable)
+            PrimaryButton("Share", { onShare(ProximitySelection(chosen.toMap())) }, Modifier.weight(1.5f), enabled = req.satisfiable)
         }
     }
 }
 
 @Composable
-private fun ProximityDocCard(doc: RequestedDocumentView, credsById: Map<String, Credential>) {
+private fun ProximityDocCard(doc: RequestedDocumentView, credsById: Map<String, Credential>, chosen: MutableMap<String, CredentialId>) {
     val c = WalletTheme.colors
-    val cred = doc.candidate?.let { credsById[it.value] }
+    val selectedId = chosen[doc.docType] ?: doc.candidates.firstOrNull()
+    val cred = selectedId?.let { credsById[it.value] }
     val title = cred?.let { credTitle(it) } ?: docTypeLabel(doc.docType)
     val requested = doc.requestedElements.flatMap { (ns, els) -> els.map { listOf(ns, it) } }
-    val requestedSet = requested.toSet()
-    val notShared = (cred?.lifecycle as? Lifecycle.Issued)?.claims.orEmpty()
-        .filter { it.category == ClaimCategory.Subject && it.path !in requestedSet }.map { it.path }
+    val valueByPath = (cred?.lifecycle as? Lifecycle.Issued)?.claims.orEmpty().associate { it.path to it.value }
 
     WalletCard(padding = PaddingValues(0.dp)) {
         Row(Modifier.fillMaxWidth().padding(16.dp, 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -442,13 +451,60 @@ private fun ProximityDocCard(doc: RequestedDocumentView, credsById: Map<String, 
                 Text(if (cred != null) "Required" else "No matching document", style = MaterialTheme.typography.bodySmall, color = if (cred != null) c.inkMuted else c.danger)
             }
         }
+
+        // Credential picker when more than one stored document answers this doctype — pick which one to present.
+        if (doc.candidates.size > 1) {
+            Box(Modifier.fillMaxWidth().height(1.dp).background(c.divider))
+            Spacer(Modifier.height(8.dp))
+            GroupHeader("Choose a document")
+            doc.candidates.forEach { candId ->
+                val candCred = credsById[candId.value]
+                val candValues = (candCred?.lifecycle as? Lifecycle.Issued)?.claims.orEmpty().associate { it.path to it.value }
+                val subtitle = requested.mapNotNull { candValues[it]?.display() }.filter { it.isNotBlank() }.take(2).joinToString(" · ")
+                ProxCandidateCard(candCred, candId == selectedId, subtitle) { chosen[doc.docType] = candId }
+            }
+            Spacer(Modifier.height(6.dp))
+        }
+
         Box(Modifier.fillMaxWidth().height(1.dp).background(c.divider))
         GroupHeader("Shared")
-        requested.forEach { InfoRow(claimPathLabel(it), "Shared", c.trust) }
-        if (notShared.isNotEmpty()) {
-            GroupHeader("Not shared")
-            notShared.forEach { InfoRow(claimPathLabel(it), "Private", c.inkFaint) }
+        // Only the requested elements the chosen document actually holds are sent (ISO 18013-5 partial
+        // disclosure): a reader may ask for more, but absent elements are simply omitted — so we list exactly
+        // what will leave the device, with its value, rather than showing a requested-but-absent "—".
+        val shared = requested.filter { valueByPath.containsKey(it) }
+        if (shared.isEmpty()) {
+            Text("No matching attributes in this document.", style = MaterialTheme.typography.bodySmall, color = c.inkMuted, modifier = Modifier.padding(16.dp, 6.dp, 16.dp, 12.dp))
+        } else {
+            shared.forEach { path -> InfoRow(claimPathLabel(path), valueByPath.getValue(path).display()) }
         }
+    }
+}
+
+/** A colored, selectable credential card for the proximity document picker (radio single-pick). */
+@Composable
+private fun ProxCandidateCard(cred: Credential?, checked: Boolean, subtitle: String, onClick: () -> Unit) {
+    val c = WalletTheme.colors
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp).clip(shape)
+            .background(if (checked) c.brand.copy(alpha = 0.06f) else c.card)
+            .border(if (checked) 1.5.dp else 1.dp, if (checked) c.brand else c.cardBorder, shape)
+            .clickable { onClick() }.padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (cred != null) DocTile(credGlyph(cred), credGradient(cred), size = 40)
+        Column(Modifier.weight(1f)) {
+            Text(cred?.let { credTitle(it) } ?: "Credential", style = MaterialTheme.typography.titleSmall, color = c.ink)
+            if (subtitle.isNotBlank()) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = c.inkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Box(
+            Modifier.size(20.dp).clip(RoundedCornerShape(99.dp))
+                .border(2.dp, if (checked) c.brand else c.cardBorderStrong, RoundedCornerShape(99.dp))
+                .background(if (checked) c.brand else Color.Transparent),
+            contentAlignment = Alignment.Center,
+        ) { if (checked) Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(12.dp)) }
     }
 }
 
