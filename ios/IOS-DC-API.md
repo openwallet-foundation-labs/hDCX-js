@@ -145,20 +145,24 @@ Our dev machine is Linux, so none of this compiles or runs here.
   `com.apple.developer.identity-document-services.document-provider.mobile-document-types`, with every
   servable doctype listed. Approval takes lead time — request it when the machine is set up.
 
-#### Apple Developer setup (done 2026-07-09)
+#### Apple Developer setup (portal reconfigured 2026-07-15 for the Axle rebrand)
 
 The portal side is configured. Signing uses the team's shared Account Holder Apple ID, added only to
 **Xcode → Settings → Accounts** — the Mac's iCloud login and the iPhone's Apple ID are irrelevant to
 code signing.
 
+The identifiers below match the Android `applicationId` `com.hopae.axle.wallet` (see
+`demo/RELEASE.md`). The original `com.hopae.eudi.wallet.demo` App IDs from the 2026-07-09 setup are
+superseded — harmless if left registered, but unused.
+
 | | Value |
 | --- | --- |
 | Team | Hopae Inc., Organization |
 | Team ID (`$(AppIdentifierPrefix)`) | `P3A48743C4` |
-| App ID (app) | `com.hopae.eudi.wallet.demo` |
-| App ID (extension) | `com.hopae.eudi.wallet.demo.idprovider` |
-| App Group | `group.com.hopae.eudi.wallet.demo` |
-| Keychain access group | `P3A48743C4.com.hopae.eudi.wallet.demo` |
+| App ID (app) | `com.hopae.axle.wallet` |
+| App ID (extension) | `com.hopae.axle.wallet.idprovider` |
+| App Group | `group.com.hopae.axle.wallet` |
+| Keychain access group | `P3A48743C4.com.hopae.axle.wallet` |
 
 An extension's bundle ID must be prefixed by its host app's. The App Group is enabled on **both** App
 IDs; the keychain group is an Xcode capability only and has no portal entry.
@@ -169,12 +173,18 @@ app because the app is what calls `IdentityDocumentProviderRegistrationStore`. D
 Verifier - Display Only* — that is `ProximityReader` (tapping an Apple Wallet ID with an iPhone),
 unrelated to our ISO 18013-5 BLE reader, and it drags in a business review.
 
+*App Attest* is also enabled on the app App ID (portal, 2026-07-15) so the portal need not be revisited
+when integrity work lands — but it stays **dormant**: nothing requests it in `.entitlements` yet, and
+the SDK does not use it (key attestation routes through the `wallet-provider` backend, not
+`DCAppAttestService`; `SecureArea.attestation` returns `nil` for now). Do not add it to the Xcode
+target until the WP integrity adapter is wired.
+
 *Digital Credentials API* is the only managed (approval-gated) capability here. Ticking it saved
 without a request prompt, which suggests the team already has it — **unconfirmed until a build proves
 it.** First thing on the Mac:
 
 ```bash
-codesign -d --entitlements :- "/path/to/EUDI Wallet Demo.app"
+codesign -d --entitlements :- "/path/to/Axle Wallet.app"
 ```
 
 Expect `com.apple.developer.identity-document-services.document-provider.mobile-document-types` with a
@@ -207,9 +217,10 @@ and Secure Enclave keys cannot be exported, so a wrong team means re-issuing eve
 #### Scope note
 
 P0 is not DC-API-specific. It *is* the hardware `SecureArea` work deferred since M1 ("platform
-artifacts"). The Android demo likewise still runs on `SoftwareSecureArea` + `FileStorageDriver`
-(`demo/app/.../adapters`). Doing P0 unblocks iOS DC API and **production key custody on both
-platforms** at once. DC API is simply the first consumer that forces the issue.
+artifacts"). Android already ships it: the demo wires `AndroidKeystoreSecureArea` (hardware-backed
+Keystore) + `FileStorageDriver` in `demo/app/.../adapters` / `DemoWallet.kt`. iOS has **no** Apple
+adapter yet, so P0 is the Secure Enclave + Keychain equivalent — the piece that brings iOS to parity
+with Android's key custody and, in the same stroke, is the prerequisite DC API forces.
 
 ### P1 — small API impedance mismatches
 
