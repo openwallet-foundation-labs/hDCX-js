@@ -100,9 +100,12 @@ public final class BlePeripheralTransport: NSObject, ProximityTransport, @unchec
                     if let central { _ = manager?.updateValue(Data([Ble.stateEnd]), for: stateChar, onSubscribedCentrals: [central]) }
                     manager?.stopAdvertising()
                     manager?.removeAllServices()
+                    manager?.delegate = nil // stop the dying manager from delivering stale callbacks to a new session
+                    central = nil
                     receiveWaiter?.resume(throwing: ProximityTransportError.closed); receiveWaiter = nil
                     connectedWaiter?.resume(throwing: ProximityTransportError.closed); connectedWaiter = nil
                     sendState?.cont.resume(throwing: ProximityTransportError.closed); sendState = nil
+                    log?("holder: closed")
                 }
                 cont.resume()
             }
@@ -214,26 +217,39 @@ extension BlePeripheralTransport: CBPeripheralManagerDelegate {
     public func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
         for request in requests {
             let uuid = request.characteristic.uuid
+            let n = request.value?.count ?? 0
             if uuid == uuids.state {
                 if let value = request.value, value.count == 1, value.first == Ble.stateStart {
                     if central == nil { central = request.central }
                     peripheral.stopAdvertising()
                     log?("holder: session START from reader")
                     markConnected()
+                } else {
+                    log?("holder: state write \(n)B (ignored)")
                 }
             } else if uuid == uuids.client2Server {
                 if let value = request.value, let prefix = value.first {
                     reassembly.append(contentsOf: value.dropFirst())
+                    log?("holder: c2s chunk \(n)B \(prefix == Ble.chunkLast ? "last" : "more") total=\(reassembly.count)")
                     if prefix == Ble.chunkLast {
                         let message = reassembly
                         reassembly = []
                         log?("holder: received \(message.count)B message")
                         deliver(message)
                     }
+                } else {
+                    log?("holder: c2s empty write")
                 }
+            } else {
+                log?("holder: write to \(uuid.uuidString) \(n)B")
             }
         }
-        if let first = requests.first { peripheral.respond(to: first, withResult: .success) }
+        // ISO 18013-5 c2s/state are Write-Without-Response: the central expects NO ATT response. Sending one
+        // (via respond) violates the protocol and stalls iOS's delivery of the central's subsequent chunks —
+        // the cause of the multi-chunk SessionEstablishment truncation. Only acknowledge with-response writes.
+        if let ack = requests.first(where: { $0.characteristic.properties.contains(.write) }) {
+            peripheral.respond(to: ack, withResult: .success)
+        }
     }
 
     public func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) {

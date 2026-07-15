@@ -35,6 +35,9 @@ import kotlin.math.min
  * Used by the reader in peripheral server mode ([Ble.PERIPHERAL_SERVER]) and the holder in central client mode
  * ([Ble.CENTRAL_CLIENT]). [connect] must be called before driving the session.
  */
+/** Inter-chunk gap for Client2Server writes, so each chunk lands in its own connection event (see [send]). */
+private const val CHUNK_PACING_MS = 40L
+
 @SuppressLint("MissingPermission")
 class BleGattClientTransport(
     private val context: Context,
@@ -182,6 +185,11 @@ class BleGattClientTransport(
             message.copyInto(chunk, 1, offset, offset + size)
             writeChar(c2sChar!!, chunk, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
             offset += size
+            // Pace multi-chunk writes: onCharacteristicWrite for a no-response write completes locally almost
+            // instantly, so back-to-back chunks land in a single connection event — an iOS peripheral then
+            // surfaces only the first and drops the rest. A short gap puts each chunk in its own event so the
+            // whole SessionEstablishment/DeviceRequest is delivered (harmless for Android↔Android).
+            if (!last) delay(CHUNK_PACING_MS)
         }
         logger?.log(WalletLogger.Level.Debug,"BLE client sent ${message.size}B")
     }

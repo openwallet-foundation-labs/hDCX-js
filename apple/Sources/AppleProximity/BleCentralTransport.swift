@@ -88,11 +88,16 @@ public final class BleCentralTransport: NSObject, ProximityTransport, @unchecked
             queue.async { [self] in
                 if !closed {
                     closed = true
-                    if let peripheral { manager?.cancelPeripheralConnection(peripheral) }
                     manager?.stopScan()
+                    if let peripheral {
+                        peripheral.delegate = nil
+                        manager?.cancelPeripheralConnection(peripheral)
+                    }
+                    manager?.delegate = nil
                     receiveWaiter?.resume(throwing: ProximityTransportError.closed); receiveWaiter = nil
                     connectWaiter?.resume(throwing: ProximityTransportError.closed); connectWaiter = nil
                     sendState?.cont.resume(throwing: ProximityTransportError.closed); sendState = nil
+                    log?("reader: closed")
                 }
                 cont.resume()
             }
@@ -135,6 +140,7 @@ public final class BleCentralTransport: NSObject, ProximityTransport, @unchecked
         guard let peripheral, c2sChar != nil, connected, !closed else {
             cont.resume(throwing: ProximityTransportError.notConnected); return
         }
+        log?("reader: sending \(message.count)B request")
         let payload = max(peripheral.maximumWriteValueLength(for: .withoutResponse) - 1, 1)
         sendState = (Ble.chunk(message, payloadSize: payload), 0, cont)
         pumpSend()
@@ -143,12 +149,17 @@ public final class BleCentralTransport: NSObject, ProximityTransport, @unchecked
     private func pumpSend() {
         guard var st = sendState, let peripheral, let c2sChar else { return }
         while st.index < st.chunks.count {
-            if !peripheral.canSendWriteWithoutResponse { sendState = st; return } // wait for peripheralIsReady
+            if !peripheral.canSendWriteWithoutResponse {
+                sendState = st
+                log?("reader: c2s buffer full at chunk \(st.index)/\(st.chunks.count), waiting")
+                return // wait for peripheralIsReady
+            }
             peripheral.writeValue(Data(st.chunks[st.index]), for: c2sChar, type: .withoutResponse)
             st.index += 1
             sendState = st
         }
         sendState = nil
+        log?("reader: request sent")
         st.cont.resume()
     }
 }
@@ -235,6 +246,7 @@ extension BleCentralTransport: CBPeripheralDelegate {
     }
 
     public func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        log?("reader: c2s buffer ready")
         pumpSend()
     }
 }
