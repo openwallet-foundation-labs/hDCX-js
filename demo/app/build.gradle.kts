@@ -20,8 +20,8 @@ android {
         applicationId = "com.hopae.axle.wallet"
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4"
+        versionCode = 5
+        versionName = "0.5"
     }
 
     buildFeatures { compose = true }

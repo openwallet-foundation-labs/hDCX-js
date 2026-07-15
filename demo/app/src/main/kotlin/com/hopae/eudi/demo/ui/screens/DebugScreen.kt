@@ -59,7 +59,8 @@ fun DebugScreen(onBack: () -> Unit) {
     val lines by LogStore.lines.collectAsState()
     val clipboard = LocalClipboardManager.current
     var filter by remember { mutableStateOf<Level?>(null) }
-    val shown = lines.filter { filter == null || levelOf(it) == filter }
+    // Newest-first on screen (like the activity list); the store/export stay chronological.
+    val shown = lines.filter { filter == null || levelOf(it) == filter }.asReversed()
 
     Column(Modifier.fillMaxSize().background(ConsoleBg)) {
         // top bar
