@@ -1,4 +1,5 @@
 import CborCose
+import Foundation // Data (image-claim base64 encoding)
 import MDoc
 
 /// Reader-side helpers that keep the `MDoc` / `CborCose` types out of the app: the app builds a request and
