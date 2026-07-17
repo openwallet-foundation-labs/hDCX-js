@@ -4,7 +4,7 @@ import android.content.Context
 import android.util.Base64
 import com.hopae.eudi.demo.adapters.LogWalletLogger
 import com.hopae.eudi.wallet.android.AndroidKeystoreSecureArea
-import com.hopae.eudi.wallet.android.FileStorageDriver
+import com.hopae.eudi.wallet.android.EncryptedFileStorageDriver
 import com.hopae.eudi.wallet.android.FileTransactionLogStore
 import com.hopae.eudi.wallet.android.OkHttpTransport
 import com.hopae.eudi.wallet.android.attestation.DevIntegrityTokenProvider
@@ -49,7 +49,8 @@ import java.security.spec.PKCS8EncodedKeySpec
  *
  * Debug notes:
  *  - [AndroidKeystoreSecureArea] holds hardware-bound holder keys that persist across restarts.
- *  - [FileStorageDriver] persists credentials as plain files; production should encrypt at rest.
+ *  - [EncryptedFileStorageDriver] encrypts credentials at rest under a hardware-bound Keystore key
+ *    (the iOS keychain equivalent). Swap in `FileStorageDriver` for plain-file, debug-only storage.
  */
 object DemoWallet {
     /** Base of the sandbox JAdES trusted lists (our Scheme Operator). */
@@ -89,7 +90,7 @@ object DemoWallet {
         val logger = LogWalletLogger() // routes SDK + adapter logs into the in-app LogStore
         val http = OkHttpTransport(logger = logger)
         val secureArea = AndroidKeystoreSecureArea()
-        val storage = FileStorageDriver(File(filesDir, "wallet"))
+        val storage = EncryptedFileStorageDriver(File(filesDir, "wallet"))
 
         val trust = resolveTrust(http, File(filesDir, "trust"))
         // Reader-auth identity for the Read-mDL role — the demo reuses the verifier's WRPAC (chains to the
