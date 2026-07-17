@@ -1,6 +1,11 @@
 // @ts-check
 import {themes as prismThemes} from 'prism-react-renderer';
 
+// The site deploys to the GitHub Pages of whichever repo runs the deploy
+// workflow (fork or upstream), so the target is derived from the
+// Actions-provided GITHUB_REPOSITORY rather than hardcoded.
+const [org, repo] = (process.env.GITHUB_REPOSITORY ?? 'lukasjhan/Axle').split('/');
+
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'EUDI Wallet SDK',
@@ -9,10 +14,10 @@ const config = {
 
   future: {v4: true},
 
-  url: 'https://lukasjhan.github.io',
-  baseUrl: '/Axle/',
-  organizationName: 'lukasjhan',
-  projectName: 'Axle',
+  url: `https://${org}.github.io`,
+  baseUrl: `/${repo}/`,
+  organizationName: org,
+  projectName: repo,
   onBrokenLinks: 'warn',
   onBrokenMarkdownLinks: 'warn',
 
